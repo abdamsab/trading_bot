@@ -1,0 +1,44 @@
+version: '3.9'
+
+services:
+  hub:
+    build:
+      context: .
+      dockerfile: hub/Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./hub:/app
+      - ./shared:/shared
+    depends_on:
+      - db
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    ports:
+      - "9000:9000"
+    env_file:
+      - .env
+    volumes:
+      - ./gateway:/app
+      - ./shared:/shared
+    command: uvicorn app.main:app --host 0.0.0.0 --port 9000 --reload
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tradebot
+      POSTGRES_PASSWORD: tradebot_dev
+      POSTGRES_DB: tradebot
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
