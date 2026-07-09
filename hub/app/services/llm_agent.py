@@ -11,22 +11,23 @@ The agent:
 from __future__ import annotations
 
 import json
-import time
 from datetime import datetime, timezone
 from typing import Any
 
 import structlog
 from pydantic import BaseModel, Field, field_validator
 
-from hub.app.services.llm.base import LLMProvider, LLMResponse, ProviderError
+from hub.app.services.llm.base import LLMProvider, LLMResponse
 
 logger = structlog.get_logger()
 
 # ── Validation Schema ───────────────────────────────────────────────────
 
+
 # Matches the JSON shape we ask the LLM to produce
 class LLMProposal(BaseModel):
     """Validated LLM output — mirrors TradeAction / ProposalCreate."""
+
     action: str = Field(..., pattern=r"^(BUY|SELL|HOLD)$")
     symbol: str = Field(..., min_length=1, max_length=20)
     volume: float = Field(..., ge=0.01, le=100.0)
@@ -48,7 +49,7 @@ SYSTEM_PROMPT = """\
 You are a senior financial analyst assisting a retail Forex trader.
 
 ## Your Role
-Analyze the provided market data, news, and technical context. Output a single trade recommendation as valid JSON.
+Analyze market data, news, and technical context. Output one trade recommendation as valid JSON.
 
 ## Output Format (JSON only)
 {
@@ -108,14 +109,14 @@ def build_user_prompt(
         parts.append("")
 
     parts.append(
-        "Based on the above, what is your trade recommendation? "
-        "Respond with valid JSON only."
+        "Based on the above, what is your trade recommendation? Respond with valid JSON only."
     )
 
     return "\n".join(parts)
 
 
 # ── LLM Agent ───────────────────────────────────────────────────────────
+
 
 class LLMAgent:
     """Generates and validates trade proposals using a configured LLM provider.
@@ -206,7 +207,7 @@ class LLMAgent:
             # Remove opening fence (```json, ```, etc.)
             first_newline = cleaned.find("\n")
             if first_newline != -1:
-                cleaned = cleaned[first_newline + 1:]
+                cleaned = cleaned[first_newline + 1 :]
             # Remove closing fence
             if cleaned.endswith("```"):
                 cleaned = cleaned[:-3].strip()
@@ -219,8 +220,7 @@ class LLMAgent:
         except json.JSONDecodeError as e:
             logger.warning("llm_parse_failed", error=str(e), raw_text=text[:500])
             raise ValueError(
-                f"Failed to parse LLM response as JSON: {e}. "
-                f"Raw text: {text[:300]}"
+                f"Failed to parse LLM response as JSON: {e}. Raw text: {text[:300]}"
             ) from e
 
         # Validate with Pydantic
@@ -228,10 +228,7 @@ class LLMAgent:
             proposal = LLMProposal.model_validate(data)
         except Exception as e:
             logger.warning("llm_validation_failed", error=str(e), data=data)
-            raise ValueError(
-                f"LLM response failed validation: {e}. "
-                f"Data received: {data}"
-            ) from e
+            raise ValueError(f"LLM response failed validation: {e}. Data received: {data}") from e
 
         return proposal
 

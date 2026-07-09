@@ -6,7 +6,14 @@ See LLM_PROVIDER docs for the full list of supported providers.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from hub.app.services.llm.factory import LLMProvider
+    from hub.app.services.market_data import MarketDataService
+    from hub.app.services.news_collector import NewsCollector
 
 
 class Settings(BaseSettings):
@@ -47,6 +54,10 @@ class Settings(BaseSettings):
     rate_limit_confidence_floor: float = 0.60
     rate_limit_max_pending: int = 3
     rate_limit_daily_cap: int = 20
+    # News blackout: avoid proposing just before/after high-impact events.
+    # Values in minutes. Total window = before + after.
+    blackout_minutes_before: int = 15
+    blackout_minutes_after: int = 15
 
     # ── Risk ────────────────────────────────────────────────────────
     risk_max_single_lot: float = 10.0
@@ -95,6 +106,7 @@ class Settings(BaseSettings):
         This is called once at startup and the result is cached by the caller.
         """
         from hub.app.services.llm.factory import create_provider
+
         return create_provider(
             provider_name=self.llm_provider,
             api_key=self.llm_api_key,

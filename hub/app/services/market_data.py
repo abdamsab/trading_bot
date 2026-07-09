@@ -12,8 +12,6 @@ Usage:
 
 from __future__ import annotations
 
-import logging
-import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -37,9 +35,20 @@ class MarketDataService:
 
     # Well-known forex symbols
     FOREX_SYMBOLS = {
-        "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD",
-        "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY",
-        "XAUUSD", "XAGUSD", "BTCUSD", "ETHUSD",
+        "EURUSD",
+        "GBPUSD",
+        "USDJPY",
+        "AUDUSD",
+        "USDCAD",
+        "USDCHF",
+        "NZDUSD",
+        "EURGBP",
+        "EURJPY",
+        "GBPJPY",
+        "XAUUSD",
+        "XAGUSD",
+        "BTCUSD",
+        "ETHUSD",
     }
 
     COMMON_METALS = {"XAUUSD", "XAGUSD"}
@@ -127,7 +136,9 @@ class MarketDataService:
         data = resp.json()
 
         if data.get("status") == "error":
-            return self._empty_snapshot(symbol, error=data.get("message", "Unknown Twelve Data error"))
+            return self._empty_snapshot(
+                symbol, error=data.get("message", "Unknown Twelve Data error")
+            )
 
         return {
             "symbol": symbol,
@@ -171,7 +182,9 @@ class MarketDataService:
         rate_data = data.get("Realtime Currency Exchange Rate", {})
 
         if not rate_data:
-            return self._empty_snapshot(symbol, error="No rate data returned — check symbol or API key")
+            return self._empty_snapshot(
+                symbol, error="No rate data returned — check symbol or API key"
+            )
 
         price = _safe_float(rate_data.get("5. Exchange Rate"))
         return {

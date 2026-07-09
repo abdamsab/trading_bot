@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Text, func
+from sqlalchemy import JSON, DateTime, Enum, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from hub.app.models import Base
@@ -14,14 +14,17 @@ from shared.schemas import ProposalStatus, TradeAction
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
+
 def _uuid() -> str:
     return str(uuid.uuid4())
+
 
 def _future(seconds: int = 300) -> datetime:
     return datetime.now(timezone.utc) + timedelta(seconds=seconds)
 
 
 # ── Proposal ───────────────────────────────────────────────────────────
+
 
 class Proposal(Base):
     __tablename__ = "proposals"
@@ -51,15 +54,9 @@ class Proposal(Base):
     llm_model: Mapped[str | None] = mapped_column(String(64), nullable=True)
     llm_raw_output: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
-    expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_future
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    responded_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_future)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     events: Mapped[list["ProposalEvent"]] = relationship(
@@ -71,6 +68,7 @@ class Proposal(Base):
 
 # ── Proposal Event (Audit Log) ─────────────────────────────────────────
 
+
 class ProposalEvent(Base):
     __tablename__ = "proposal_events"
 
@@ -80,11 +78,11 @@ class ProposalEvent(Base):
     )
     from_state: Mapped[str | None] = mapped_column(String(20), nullable=True)
     to_state: Mapped[str] = mapped_column(String(20))
-    actor: Mapped[str] = mapped_column(String(64))  # system, user:<tg_id>, auto_reject_timer, rate_limiter
+    actor: Mapped[str] = mapped_column(
+        String(64)
+    )  # system, user:<tg_id>, auto_reject_timer, rate_limiter
     extra_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
     proposal: Mapped["Proposal"] = relationship(back_populates="events")

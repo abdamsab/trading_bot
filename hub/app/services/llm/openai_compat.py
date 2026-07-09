@@ -17,7 +17,6 @@ Works with any API that follows the OpenAI chat completions format:
 
 from __future__ import annotations
 
-import json
 import time
 from typing import Any
 
@@ -139,8 +138,10 @@ class OpenAICompatibleProvider(LLMProvider):
 
             except httpx.TimeoutException as e:
                 last_error = ProviderError(
-                    "Request timed out", provider=self.provider_name,
-                    model=self._model, cause=e,
+                    "Request timed out",
+                    provider=self.provider_name,
+                    model=self._model,
+                    cause=e,
                 )
                 if attempt < self._max_retries:
                     await _exponential_backoff(attempt)
@@ -149,8 +150,10 @@ class OpenAICompatibleProvider(LLMProvider):
 
             except httpx.RequestError as e:
                 last_error = ProviderError(
-                    f"Network error: {e}", provider=self.provider_name,
-                    model=self._model, cause=e,
+                    f"Network error: {e}",
+                    provider=self.provider_name,
+                    model=self._model,
+                    cause=e,
                 )
                 if attempt < self._max_retries:
                     await _exponential_backoff(attempt)
@@ -159,11 +162,14 @@ class OpenAICompatibleProvider(LLMProvider):
 
         # Should not reach here, but satisfy type checker
         raise last_error or ProviderError(
-            "Unknown error", provider=self.provider_name, model=self._model,
+            "Unknown error",
+            provider=self.provider_name,
+            model=self._model,
         )
 
 
 async def _exponential_backoff(attempt: int) -> None:
     import asyncio
+
     delay = min(2 ** (attempt + 1), 30)  # 2s, 4s, 8s, 16s, 30s cap
     await asyncio.sleep(delay)

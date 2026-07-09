@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import logging
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -46,15 +45,59 @@ _FALLBACK_HEADLINES: list[str] = [
 
 # Keywords to filter for forex/crypto relevance
 _FOREX_KEYWORDS: set[str] = {
-    "dollar", "euro", "pound", "yen", "franc", "forex", "fx", "currency",
-    "fed", "ecb", "central bank", "interest rate", "cpi", "inflation",
-    "gdp", "nonfarm", "nfp", "employment", "treasury", "bond",
-    "crude", "gold", "oil", "commodity", "xau", "xag", "btc", "bitcoin",
-    "ethereum", "crypto", "trading", "market", "stock",
+    "dollar",
+    "euro",
+    "pound",
+    "yen",
+    "franc",
+    "forex",
+    "fx",
+    "currency",
+    "fed",
+    "ecb",
+    "central bank",
+    "interest rate",
+    "cpi",
+    "inflation",
+    "gdp",
+    "nonfarm",
+    "nfp",
+    "employment",
+    "treasury",
+    "bond",
+    "crude",
+    "gold",
+    "oil",
+    "commodity",
+    "xau",
+    "xag",
+    "btc",
+    "bitcoin",
+    "ethereum",
+    "crypto",
+    "trading",
+    "market",
+    "stock",
     # Currency pair codes
-    "eur", "usd", "gbp", "jpy", "chf", "aud", "cad", "nzd",
-    "usdjpy", "eurgbp", "gbpusd", "eurusd", "audusd", "usdcad",
-    "usdchf", "nzdusd", "gbpjpy", "eurjpy", "eurchf",
+    "eur",
+    "usd",
+    "gbp",
+    "jpy",
+    "chf",
+    "aud",
+    "cad",
+    "nzd",
+    "usdjpy",
+    "eurgbp",
+    "gbpusd",
+    "eurusd",
+    "audusd",
+    "usdcad",
+    "usdchf",
+    "nzdusd",
+    "gbpjpy",
+    "eurjpy",
+    "eurchf",
 }
 
 

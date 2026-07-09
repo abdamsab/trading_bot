@@ -36,13 +36,13 @@ TIMEFRAMES: Final[list[str]] = ["scalp", "intraday", "swing", "position"]
 # ── News Blackout Events ──────────────────────────────────────────────
 
 HIGH_IMPACT_EVENTS: Final[list[str]] = [
-    "NFP",      # Non-Farm Payrolls
-    "FOMC",     # Fed Interest Rate Decision
-    "CPI",      # Consumer Price Index
-    "GDP",      # Gross Domestic Product
-    "PPI",      # Producer Price Index
-    "BOE",      # Bank of England Rate Decision
-    "ECB",      # ECB Rate Decision
+    "NFP",  # Non-Farm Payrolls
+    "FOMC",  # Fed Interest Rate Decision
+    "CPI",  # Consumer Price Index
+    "GDP",  # Gross Domestic Product
+    "PPI",  # Producer Price Index
+    "BOE",  # Bank of England Rate Decision
+    "ECB",  # ECB Rate Decision
 ]
 
 BLACKOUT_MINUTES_BEFORE: Final[int] = 15

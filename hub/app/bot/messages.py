@@ -9,7 +9,9 @@ from shared.schemas import AccountSnapshot
 def render_proposal(proposal: Proposal, *, edited: bool = False) -> str:
     """Format a trade proposal as a Telegram message."""
     edited_tag = " ✏️ *Edited*" if edited else ""
-    action_str = proposal.action.value if hasattr(proposal.action, "value") else str(proposal.action)
+    action_str = (
+        proposal.action.value if hasattr(proposal.action, "value") else str(proposal.action)
+    )
     lines = [
         f"📊 *Trade Proposal*  #{proposal.id[:8]}{edited_tag}",
         "",
@@ -39,7 +41,7 @@ def render_account_snapshot(snapshot: AccountSnapshot) -> str:
     """Format an account snapshot as a Telegram message."""
     pnl_emoji = "📈" if (snapshot.floating_pnl or 0) >= 0 else "📉"
     lines = [
-        f"📊 *Account Snapshot*",
+        "📊 *Account Snapshot*",
         "",
         "━━━━━━━━━━━━━━━━━━━━━━━━━",
         f"Balance:      ${snapshot.balance:,.2f}",
@@ -71,7 +73,10 @@ def render_approval_confirmation(proposal: Proposal, ticket_id: int, fill_price:
 
 def render_rejection(proposal: Proposal) -> str:
     """User rejected the proposal."""
-    return f"❌ *Proposal Rejected*\n\n{proposal.action.value} {proposal.symbol} · {proposal.volume:.2f} lots — discarded."
+    return (
+        f"❌ *Proposal Rejected*\n\n"
+        f"{proposal.action.value} {proposal.symbol} · {proposal.volume:.2f} lots – discarded."
+    )
 
 
 def render_expired(proposal: Proposal) -> str:
@@ -100,8 +105,11 @@ def render_risk_blocked(proposal: Proposal, reasons: list[str]) -> str:
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
+
 def _fmt_remaining(expires_at) -> str:
-    remaining = expires_at - __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+    remaining = expires_at - __import__("datetime").datetime.now(
+        __import__("datetime").timezone.utc
+    )
     secs = int(remaining.total_seconds())
     if secs <= 0:
         return "Expired"

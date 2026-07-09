@@ -10,8 +10,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-
 # ── Enums ──────────────────────────────────────────────────────────────
+
 
 class TradeAction(str, Enum):
     BUY = "BUY"
@@ -31,8 +31,10 @@ class ProposalStatus(str, Enum):
 
 # ── Proposals ──────────────────────────────────────────────────────────
 
+
 class ProposalCreate(BaseModel):
     """Payload from the LLM agent — a trade recommendation."""
+
     action: TradeAction
     symbol: str = Field(max_length=20)
     volume: Decimal = Field(ge=Decimal("0.01"), le=Decimal("100.0"))
@@ -45,6 +47,7 @@ class ProposalCreate(BaseModel):
 
 class ProposalResponse(BaseModel):
     """Full proposal as stored and displayed."""
+
     id: UUID
     status: ProposalStatus
     action: TradeAction
@@ -65,8 +68,10 @@ class ProposalResponse(BaseModel):
 
 # ── Approval / Execution ───────────────────────────────────────────────
 
+
 class ApprovalRequest(BaseModel):
     """Sent from Hub to Gateway when user approves."""
+
     proposal_id: UUID
     action: TradeAction
     symbol: str
@@ -77,6 +82,7 @@ class ApprovalRequest(BaseModel):
 
 class ExecutionResult(BaseModel):
     """Returned from Gateway after order submission."""
+
     success: bool
     ticket_id: Optional[int] = None
     fill_price: Optional[Decimal] = None
@@ -86,8 +92,10 @@ class ExecutionResult(BaseModel):
 
 # ── Account / Monitoring ───────────────────────────────────────────────
 
+
 class AccountSnapshot(BaseModel):
     """Snapshot of the trading account state."""
+
     balance: Decimal
     equity: Decimal
     margin: Decimal
@@ -100,6 +108,7 @@ class AccountSnapshot(BaseModel):
 
 class PositionInfo(BaseModel):
     """An open position."""
+
     ticket: int
     symbol: str
     action: TradeAction
@@ -112,6 +121,7 @@ class PositionInfo(BaseModel):
 
 
 # ── Health ──────────────────────────────────────────────────────────────
+
 
 class HealthStatus(BaseModel):
     status: str  # ok, degraded, down

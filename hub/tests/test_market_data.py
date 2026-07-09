@@ -6,7 +6,6 @@ without real API calls.
 
 from __future__ import annotations
 
-import json
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -14,17 +13,10 @@ import pytest
 
 from hub.app.services.market_data import MarketDataService, _safe_float
 
-
 # ── Helpers ────────────────────────────────────────────────────────────
 
 
-def _mock_transport(response_body: dict, status_code: int = 200) -> httpx.BaseTransport:
-    """Create a mock HTTP transport that returns a fixed JSON response."""
-    response = httpx.Response(status_code=status_code, json=response_body)
-    return httpx.MockTransport(lambda _: response)
-
-
-# ── _safe_float ────────────────────────────────────────────────────────
+# ── _safe_float
 
 
 class TestSafeFloat:
@@ -86,35 +78,28 @@ class TestFetchSnapshot:
     async def test_twelve_data_success(self):
         """Verify Twelve Data quote response is parsed correctly."""
         s = MarketDataService(api_key="test-key")
-        mock_data = {
-            "symbol": "EUR/USD",
-            "close": "1.0945",
-            "bid": "1.0944",
-            "ask": "1.0946",
-            "spread": "2",
-            "percent_change": "0.15",
-            "high": "1.0960",
-            "low": "1.0930",
-            "volume": "14235",
-            "previous_close": "1.0930",
-            "datetime": "2026-06-01 12:00:00",
-        }
 
-        with patch.object(s, "_fetch_twelve_data", AsyncMock(return_value={
-            "symbol": "EURUSD",
-            "price": 1.0945,
-            "bid": 1.0944,
-            "ask": 1.0946,
-            "spread": 2.0,
-            "change_pct": 0.15,
-            "high_day": 1.0960,
-            "low_day": 1.0930,
-            "volume": 14235.0,
-            "previous_close": 1.0930,
-            "timestamp": "2026-06-01 12:00:00",
-            "source": "twelve_data",
-            "provider": "twelve_data",
-        })):
+        with patch.object(
+            s,
+            "_fetch_twelve_data",
+            AsyncMock(
+                return_value={
+                    "symbol": "EURUSD",
+                    "price": 1.0945,
+                    "bid": 1.0944,
+                    "ask": 1.0946,
+                    "spread": 2.0,
+                    "change_pct": 0.15,
+                    "high_day": 1.0960,
+                    "low_day": 1.0930,
+                    "volume": 14235.0,
+                    "previous_close": 1.0930,
+                    "timestamp": "2026-06-01 12:00:00",
+                    "source": "twelve_data",
+                    "provider": "twelve_data",
+                }
+            ),
+        ):
             result = await s.fetch_snapshot("EURUSD")
 
         assert result["symbol"] == "EURUSD"
@@ -132,15 +117,18 @@ class TestFetchSnapshot:
         """Test error response from Twelve Data API (e.g. invalid symbol)."""
         s = MarketDataService(api_key="test-key")
 
-        mock_data = {"status": "error", "message": "symbol not found"}
-        transport = _mock_transport(mock_data)
-
-        with patch.object(s, "_fetch_twelve_data", AsyncMock(return_value={
-            "symbol": "INVALID",
-            "price": None,
-            "source": "error",
-            "error": "symbol not found",
-        })):
+        with patch.object(
+            s,
+            "_fetch_twelve_data",
+            AsyncMock(
+                return_value={
+                    "symbol": "INVALID",
+                    "price": None,
+                    "source": "error",
+                    "error": "symbol not found",
+                }
+            ),
+        ):
             result = await s.fetch_snapshot("INVALID")
 
         assert "error" in result
@@ -148,36 +136,30 @@ class TestFetchSnapshot:
 
     @pytest.mark.asyncio
     async def test_alpha_vantage_success(self):
-        """Verify Alpha Vantage response is parsed correctly."""
+        """Verify Alpha Vantage quote response is parsed correctly."""
         s = MarketDataService(provider="alpha_vantage", api_key="test-key")
 
-        mock_data = {
-            "Realtime Currency Exchange Rate": {
-                "1. From_Currency Code": "EUR",
-                "2. To_Currency Code": "USD",
-                "3. From_Currency Name": "Euro",
-                "4. To_Currency Name": "United States Dollar",
-                "5. Exchange Rate": "1.0945",
-                "6. Last Refreshed": "2026-06-01 12:05:01",
-                "7. Time Zone": "UTC",
-            }
-        }
-
-        with patch.object(s, "_fetch_alpha_vantage", AsyncMock(return_value={
-            "symbol": "EURUSD",
-            "price": 1.0945,
-            "bid": None,
-            "ask": None,
-            "spread": None,
-            "change_pct": None,
-            "high_day": None,
-            "low_day": None,
-            "volume": None,
-            "previous_close": None,
-            "timestamp": "2026-06-01 12:05:01",
-            "source": "alpha_vantage",
-            "provider": "alpha_vantage",
-        })):
+        with patch.object(
+            s,
+            "_fetch_alpha_vantage",
+            AsyncMock(
+                return_value={
+                    "symbol": "EURUSD",
+                    "price": 1.0945,
+                    "bid": None,
+                    "ask": None,
+                    "spread": None,
+                    "change_pct": None,
+                    "high_day": None,
+                    "low_day": None,
+                    "volume": None,
+                    "previous_close": None,
+                    "timestamp": "2026-06-01 12:05:01",
+                    "source": "alpha_vantage",
+                    "provider": "alpha_vantage",
+                }
+            ),
+        ):
             result = await s.fetch_snapshot("EURUSD")
 
         assert result["symbol"] == "EURUSD"
@@ -190,12 +172,18 @@ class TestFetchSnapshot:
         """Test Alpha Vantage response missing rate data."""
         s = MarketDataService(provider="alpha_vantage", api_key="test-key")
 
-        with patch.object(s, "_fetch_alpha_vantage", AsyncMock(return_value={
-            "symbol": "EURUSD",
-            "price": None,
-            "source": "error",
-            "error": "No rate data returned — check symbol or API key",
-        })):
+        with patch.object(
+            s,
+            "_fetch_alpha_vantage",
+            AsyncMock(
+                return_value={
+                    "symbol": "EURUSD",
+                    "price": None,
+                    "source": "error",
+                    "error": "No rate data returned — check symbol or API key",
+                }
+            ),
+        ):
             result = await s.fetch_snapshot("EURUSD")
 
         assert "error" in result
@@ -207,9 +195,17 @@ class TestFetchMultiple:
     async def test_fetch_multiple_symbols(self):
         s = MarketDataService(api_key="test-key", http_timeout=1.0)
 
-        with patch.object(s, "fetch_snapshot", AsyncMock(return_value={
-            "symbol": "EURUSD", "price": 1.09, "source": "mock",
-        })):
+        with patch.object(
+            s,
+            "fetch_snapshot",
+            AsyncMock(
+                return_value={
+                    "symbol": "EURUSD",
+                    "price": 1.09,
+                    "source": "mock",
+                }
+            ),
+        ):
             results = await s.fetch_multiple(["EURUSD", "GBPUSD"])
 
         assert "EURUSD" in results

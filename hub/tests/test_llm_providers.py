@@ -7,20 +7,18 @@ Does NOT make real API calls — uses mock HTTP backends.
 from __future__ import annotations
 
 import json
-from typing import Any
 
-import pytest
 import httpx
+import pytest
 
+from hub.app.services.llm.anthropic_provider import AnthropicProvider
 from hub.app.services.llm.base import LLMProvider, LLMResponse, ProviderError
 from hub.app.services.llm.factory import (
     create_provider,
     list_supported_providers,
-    _KNOWN_PROVIDERS,
 )
 from hub.app.services.llm.openai_compat import OpenAICompatibleProvider
-from hub.app.services.llm.anthropic_provider import AnthropicProvider
-
+from hub.app.services.llm_agent import SYSTEM_PROMPT, LLMAgent, LLMProposal, build_user_prompt
 
 # ── Tests for base classes ──────────────────────────────────────────────
 
@@ -54,7 +52,11 @@ class MockProvider(LLMProvider):
 
     def __init__(
         self,
-        response_text: str = '{"action": "BUY", "symbol": "EURUSD", "volume": 0.10, "confidence": 0.75, "reason": "Test reason with sufficient length for validation.", "timeframe": "intraday"}',
+        response_text: str = (
+            '{"action": "BUY", "symbol": "EURUSD", "volume": 0.10, '
+            '"confidence": 0.75, "reason": "Test reason with sufficient length for validation.", '
+            '"timeframe": "intraday"}'
+        ),
         model: str = "mock-model",
     ):
         self._response_text = response_text
@@ -114,7 +116,9 @@ class TestFactory:
         assert provider.model_name == "o1-preview"
 
     def test_create_with_custom_base_url(self):
-        provider = create_provider("openai", api_key="sk-test", base_url="https://my-proxy.example.com/v1")
+        provider = create_provider(
+            "openai", api_key="sk-test", base_url="https://my-proxy.example.com/v1"
+        )
         assert "my-proxy" in provider._base_url
 
     def test_create_anthropic(self):
@@ -152,6 +156,7 @@ class TestFactory:
         assert p.model_name == "gemini-2.0-flash-001"
         assert "generativelanguage.googleapis.com" in p._chat_url
 
+
 # ── Tests: OpenAI-Compatible Provider ───────────────────────────────────
 
 
@@ -162,7 +167,17 @@ class _MockTransport(httpx.BaseTransport):
         self.status_code = status_code
         self.json_body = json_body or {
             "id": "chatcmpl-mock",
-            "choices": [{"message": {"content": '{"action": "BUY", "symbol": "EURUSD", "volume": 0.10, "confidence": 0.75, "reason": "Test reason", "timeframe": "intraday"}'}}],
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            '{"action": "BUY", "symbol": "EURUSD", '
+                            '"volume": 0.10, "confidence": 0.75, '
+                            '"reason": "Test reason", "timeframe": "intraday"}'
+                        )
+                    }
+                }
+            ],
             "usage": {"prompt_tokens": 100, "completion_tokens": 50},
         }
         self.last_request: httpx.Request | None = None
@@ -218,9 +233,11 @@ class TestAnthropicProvider:
 
     def test_tool_definition(self):
         """Verify the proposal tool schema is well-formed."""
-        p = AnthropicProvider(model="claude-sonnet-4", api_key="sk-ant-test")
+        # AnthropicProvider instantiation validates tool schema
+        _ = AnthropicProvider(model="claude-sonnet-4", api_key="sk-ant-test")
         # Access the tool - should be structured correctly
         import hub.app.services.llm.anthropic_provider as ap
+
         assert ap._PROPOSAL_TOOL["name"] == "generate_proposal"
         assert "input_schema" in ap._PROPOSAL_TOOL
         props = ap._PROPOSAL_TOOL["input_schema"]["properties"]
@@ -232,9 +249,6 @@ class TestAnthropicProvider:
 # ── Tests: LLM Agent ────────────────────────────────────────────────────
 
 
-from hub.app.services.llm_agent import LLMAgent, LLMProposal, build_user_prompt, SYSTEM_PROMPT
-
-
 class TestLLMProposalSchema:
     def test_valid_proposal(self):
         data = {
@@ -242,7 +256,7 @@ class TestLLMProposalSchema:
             "symbol": "EURUSD",
             "volume": 0.10,
             "confidence": 0.75,
-            "reason": "Price broke above resistance with strong volume. RSI at 58 suggests momentum.",
+            "reason": "Price broke above resistance with volume. RSI at 58 suggests momentum.",
             "take_profit": 1.1150,
             "stop_loss": 1.0950,
             "timeframe": "intraday",
@@ -265,35 +279,41 @@ class TestLLMProposalSchema:
 
     def test_invalid_action_raises(self):
         with pytest.raises(ValueError):
-            LLMProposal.model_validate({
-                "action": "MOON",
-                "symbol": "EURUSD",
-                "volume": 0.10,
-                "confidence": 1.0,
-                "reason": "To the moon!",
-                "timeframe": "swing",
-            })
+            LLMProposal.model_validate(
+                {
+                    "action": "MOON",
+                    "symbol": "EURUSD",
+                    "volume": 0.10,
+                    "confidence": 1.0,
+                    "reason": "To the moon!",
+                    "timeframe": "swing",
+                }
+            )
 
     def test_confidence_bounds(self):
         with pytest.raises(ValueError):
-            LLMProposal.model_validate({
-                "action": "BUY",
-                "symbol": "EURUSD",
-                "volume": 0.10,
-                "confidence": 1.5,
-                "reason": "Overconfident",
-                "timeframe": "swing",
-            })
+            LLMProposal.model_validate(
+                {
+                    "action": "BUY",
+                    "symbol": "EURUSD",
+                    "volume": 0.10,
+                    "confidence": 1.5,
+                    "reason": "Overconfident",
+                    "timeframe": "swing",
+                }
+            )
 
     def test_volume_rounding(self):
-        p = LLMProposal.model_validate({
-            "action": "SELL",
-            "symbol": "GBPUSD",
-            "volume": 0.1234,
-            "confidence": 0.60,
-            "reason": "Rounding test for volume precision.",
-            "timeframe": "intraday",
-        })
+        p = LLMProposal.model_validate(
+            {
+                "action": "SELL",
+                "symbol": "GBPUSD",
+                "volume": 0.1234,
+                "confidence": 0.60,
+                "reason": "Rounding test for volume precision.",
+                "timeframe": "intraday",
+            }
+        )
         assert p.volume == 0.12  # rounded to 2 decimal places
 
 
@@ -340,11 +360,21 @@ class TestLLMAgent:
     async def test_parse_markdown_code_block(self, mock_provider):
         """Test parsing JSON wrapped in markdown code fences."""
         provider = MockProvider(
-            response_text="```json\n{\"action\": \"SELL\", \"symbol\": \"USDJPY\", \"volume\": 0.05, \"confidence\": 0.60, \"reason\": \"Strong technical resistance at 150.00. Bearish divergence on RSI. Expecting reversal.\", \"timeframe\": \"intraday\"}\n```"
+            response_text=(
+                '```json\n{"action": "SELL", "symbol": "USDJPY", '
+                '"volume": 0.05, "confidence": 0.60, '
+                '"reason": "Strong technical resistance at 150.00. '
+                'Bearish divergence on RSI. Expecting reversal.", '
+                '"timeframe": "intraday"}\n```'
+            )
         )
         agent = LLMAgent(provider)
         result = agent._parse_response(
-            "```json\n{\"action\": \"SELL\", \"symbol\": \"USDJPY\", \"volume\": 0.05, \"confidence\": 0.60, \"reason\": \"Strong technical resistance at 150.00. Bearish divergence on RSI. Expecting reversal.\", \"timeframe\": \"intraday\"}\n```"
+            '```json\n{"action": "SELL", "symbol": "USDJPY", '
+            '"volume": 0.05, "confidence": 0.60, '
+            '"reason": "Strong technical resistance at 150.00. '
+            'Bearish divergence on RSI. Expecting reversal.", '
+            '"timeframe": "intraday"}\n```'
         )
         assert result.action == "SELL"
         assert result.symbol == "USDJPY"
@@ -358,6 +388,7 @@ class TestLLMAgent:
 
     def test_provider_response_format(self):
         from hub.app.services.llm_agent import _provider_response_format
+
         assert _provider_response_format("openai") == "json_object"
         assert _provider_response_format("anthropic") == "tool"
         assert _provider_response_format("ollama") == "json_object"

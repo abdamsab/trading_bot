@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -22,19 +21,16 @@ from telegram.ext import (
 
 from hub.app.bot.keyboards import (
     approve_with_volume_keyboard,
-    expired_keyboard,
     proposal_keyboard,
 )
 from hub.app.bot.messages import (
     render_approval_confirmation,
-    render_error,
     render_expired,
     render_proposal,
     render_rejection,
-    render_risk_blocked,
 )
 from hub.app.config import settings
-from shared.constants import MAX_LOT, MIN_LOT, LOT_STEP
+from shared.constants import LOT_STEP, MAX_LOT, MIN_LOT
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +55,7 @@ _db_session_factory = None
 _llm_agent = None
 _market_data_service = None
 _news_collector = None
+_rate_limiter = None
 
 
 def set_db_session_factory(factory):
@@ -85,7 +82,14 @@ def set_news_collector(collector):
     _news_collector = collector
 
 
+def set_rate_limiter(limiter):
+    """Inject the RateLimitEnforcer from main.py."""
+    global _rate_limiter
+    _rate_limiter = limiter
+
+
 # ── Helpers ────────────────────────────────────────────────────────────
+
 
 def _is_authorized(update: Update) -> bool:
     """Check if the user is whitelisted."""
@@ -98,12 +102,11 @@ def _is_authorized(update: Update) -> bool:
 async def _get_proposal(proposal_id: str):
     """Fetch a proposal from DB by ID."""
     from sqlalchemy import select
+
     from hub.app.models.proposal import Proposal
 
     async with _db_session_factory() as session:
-        result = await session.execute(
-            select(Proposal).where(Proposal.id == proposal_id)
-        )
+        result = await session.execute(select(Proposal).where(Proposal.id == proposal_id))
         return result.scalar_one_or_none()
 
 
@@ -113,13 +116,15 @@ async def _save_proposal(proposal, *, source: str = "manual") -> None:
 
     async with _db_session_factory() as session:
         session.add(proposal)
-        session.add(ProposalEvent(
-            proposal_id=proposal.id,
-            from_state=None,
-            to_state=proposal.status.value,
-            actor="system",
-            extra_data={"source": source},
-        ))
+        session.add(
+            ProposalEvent(
+                proposal_id=proposal.id,
+                from_state=None,
+                to_state=proposal.status.value,
+                actor="system",
+                extra_data={"source": source},
+            )
+        )
         await session.commit()
 
 
@@ -131,12 +136,11 @@ async def _transition_proposal(
 ) -> Any | None:
     """Transition a proposal to a new status and log the event."""
     from sqlalchemy import select
+
     from hub.app.models.proposal import Proposal, ProposalEvent
 
     async with _db_session_factory() as session:
-        result = await session.execute(
-            select(Proposal).where(Proposal.id == proposal_id)
-        )
+        result = await session.execute(select(Proposal).where(Proposal.id == proposal_id))
         proposal = result.scalar_one_or_none()
         if not proposal:
             return None
@@ -146,13 +150,15 @@ async def _transition_proposal(
         if to_status in ("approved", "rejected", "expired", "failed"):
             proposal.responded_at = datetime.now(timezone.utc)
 
-        session.add(ProposalEvent(
-            proposal_id=proposal_id,
-            from_state=from_status,
-            to_state=to_status,
-            actor=actor,
-            extra_data=extra_data or {},
-        ))
+        session.add(
+            ProposalEvent(
+                proposal_id=proposal_id,
+                from_state=from_status,
+                to_state=to_status,
+                actor=actor,
+                extra_data=extra_data or {},
+            )
+        )
     await session.commit()
     return proposal
 
@@ -167,7 +173,9 @@ async def _schedule_auto_reject(proposal_id: str, delay: int) -> None:
             return
 
         proposal = await _transition_proposal(
-            proposal_id, "expired", "auto_reject_timer",
+            proposal_id,
+            "expired",
+            "auto_reject_timer",
             {"reason": "timeout", "timeout_seconds": delay},
         )
         if proposal and proposal.telegram_msg_id and _app:
@@ -204,6 +212,7 @@ def cancel_auto_reject(proposal_id: str) -> None:
 
 # ── Mock Proposal Generator ────────────────────────────────────────────
 
+
 def _generate_mock_proposal() -> dict:
     """Generate a fake proposal for testing the approval flow."""
     import random
@@ -211,11 +220,11 @@ def _generate_mock_proposal() -> dict:
     symbols = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]
     actions = ["BUY", "SELL"]
     reasons = [
-        "Price broke above 200 EMA on H1 with increasing volume. RSI at 62 suggests room to run higher before overbought.",
-        "NFP miss of 90K vs 180K expected weakening USD. Bullish bias on EURUSD for the session.",
-        "Support level held at 1.0950 for the third test. Double bottom pattern on M30. Risk/reward 1:3.",
-        "USD strength on FOMC hawkish surprise. Momentum indicators aligned bearish across multiple timeframes.",
-        "Consolidation breakout above resistance. Volume confirmation. Targeting next resistance level.",
+        "Price broke 200 EMA on H1 with volume. RSI at 62 suggests more room before overbought.",
+        "NFP miss of 90K vs 180K expected. Weakening USD. Bullish on EURUSD for session.",
+        "Support level held at 1.0950. Double bottom on M30. Risk/reward 1:3.",
+        "USD strength on FOMC hawkish surprise. Momentum aligned bearish across timeframes.",
+        "Consolidation breakout above resistance. Volume confirmed. Targeting next resistance.",
     ]
 
     return {
@@ -231,6 +240,7 @@ def _generate_mock_proposal() -> dict:
 
 
 # ── Command Handlers ───────────────────────────────────────────────────
+
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start — welcome message."""
@@ -275,13 +285,30 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not _is_authorized(update):
         return
     paused_status = "⏸ *Paused*" if _proposal_paused else "▶ *Active*"
-    provider_status = "⏳ *Initializing…*" if _llm_agent is None else f"✅ `{_llm_agent.provider.provider_name}` / `{_llm_agent.provider.model_name}`"
+    provider_status = (
+        "⏳ *Initializing…*"
+        if _llm_agent is None
+        else f"✅ `{_llm_agent.provider.provider_name}` / `{_llm_agent.provider.model_name}`"
+    )
+    rl_status = ""
+    if _rate_limiter:
+        s = _rate_limiter.get_status()
+        rl_lines = [
+            f"Hourly: `{s['hourly_used']}/{s['global_max_per_hour']}`",
+            f"Daily: `{s['daily_used']}/{s['daily_cap']}`",
+        ]
+        if s.get("symbols_on_cooldown"):
+            cooldown_syms = ", ".join(sc["symbol"] for sc in s["symbols_on_cooldown"])
+            rl_lines.append(f"Cooldown: `{cooldown_syms}`")
+        if s.get("news_blackout"):
+            rl_lines.append(f"📰 *News blackout* — `{s['news_blackout']['event']}`")
+        rl_status = "Rate Limiter: ✅\n" + "\n".join(rl_lines) + "\n"
     await update.message.reply_text(
         f"🩺 *System Status*\n\n"
         f"Proposal Engine: {paused_status}\n"
         f"LLM Provider: {provider_status}\n"
+        f"{rl_status}"
         f"Gateway: `{settings.gateway_base_url}`\n"
-        f"Pending Proposals: `(check DB)`\n"
         f"Auto-Reject: `{settings.proposal_expiry_seconds}s`\n"
         f"Confidence Floor: `{settings.rate_limit_confidence_floor:.0%}`",
     )
@@ -293,7 +320,9 @@ async def pause_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     global _proposal_paused
     _proposal_paused = True
-    await update.message.reply_text("⏸ *Proposal generation paused.*\nUse `/resume` to start again.")
+    await update.message.reply_text(
+        "⏸ *Proposal generation paused.*\nUse `/resume` to start again."
+    )
 
 
 async def resume_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -310,6 +339,7 @@ async def proposals_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not _is_authorized(update):
         return
     from sqlalchemy import select
+
     from hub.app.models.proposal import Proposal
 
     async with _db_session_factory() as session:
@@ -325,8 +355,12 @@ async def proposals_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     lines = ["📋 *Recent Proposals*\n"]
     for p in proposals:
         status_emoji = {
-            "pending": "⏳", "approved": "✅", "rejected": "❌",
-            "expired": "⏰", "filled": "💰", "failed": "🚫",
+            "pending": "⏳",
+            "approved": "✅",
+            "rejected": "❌",
+            "expired": "⏰",
+            "filled": "💰",
+            "failed": "🚫",
         }.get(p.status.value, "❓")
         lines.append(
             f"{status_emoji} `{p.id[:8]}` {p.action.value} {p.symbol} "
@@ -360,10 +394,53 @@ async def mock_proposal_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("⏸ System is paused. Use `/resume` first.")
         return
 
-    data = _generate_mock_proposal()
+    # Rate limit check
+    if _rate_limiter:
+        pending = await _rate_limiter.get_pending_count()
+        data = _generate_mock_proposal()
+        decision = await _rate_limiter.check(
+            symbol=data["symbol"],
+            confidence=data["confidence"],
+            pending_count=pending,
+        )
+        if not decision.allowed:
+            # Log suppression, inform user, and stop
+            # We need a proposal_id for logging — create a placeholder event
+            from hub.app.models.proposal import ProposalEvent
+
+            async with _db_session_factory() as session:
+                session.add(
+                    ProposalEvent(
+                        proposal_id=f"mock-{uuid.uuid4()}",
+                        from_state=None,
+                        to_state="suppressed",
+                        actor="rate_limiter",
+                        extra_data={
+                            "check": decision.check_name,
+                            "reason": decision.reason,
+                            "symbol": data["symbol"],
+                            "confidence": data["confidence"],
+                        },
+                    )
+                )
+                await session.commit()
+            logger.info(
+                "mock_proposal_rate_limited",
+                check=decision.check_name,
+                symbol=data["symbol"],
+                confidence=data["confidence"],
+            )
+            await update.message.reply_text(
+                f"⏸ *Proposal Blocked by Rate Limiter*\n\n{decision.reason}\n\n"
+                f"_Check `/config` for current limits._",
+            )
+            return
+    else:
+        data = _generate_mock_proposal()
 
     # Create proposal in DB
     from hub.app.models.proposal import Proposal
+
     proposal = Proposal(
         id=str(uuid.uuid4()),
         action=data["action"],
@@ -392,19 +469,21 @@ async def mock_proposal_handler(update: Update, context: ContextTypes.DEFAULT_TY
     # Update telegram_msg_id in DB
     async with _db_session_factory() as session:
         from sqlalchemy import select
+
         from hub.app.models.proposal import Proposal as ProposalModel
-        result = await session.execute(
-            select(ProposalModel).where(ProposalModel.id == proposal.id)
-        )
+
+        result = await session.execute(select(ProposalModel).where(ProposalModel.id == proposal.id))
         db_proposal = result.scalar_one_or_none()
         if db_proposal:
             db_proposal.telegram_msg_id = msg.message_id
             await session.commit()
 
+    # Record in rate limiter
+    if _rate_limiter:
+        await _rate_limiter.record(data["symbol"])
+
     # Schedule auto-reject
-    asyncio.create_task(
-        _schedule_auto_reject(proposal.id, settings.proposal_expiry_seconds)
-    )
+    asyncio.create_task(_schedule_auto_reject(proposal.id, settings.proposal_expiry_seconds))
 
 
 # ── Real LLM Proposal Handler ───────────────────────────────────────────
@@ -424,9 +503,25 @@ async def proposal_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
         return
 
+    # Rate limit check (before LLM call — don't waste tokens)
+    if _rate_limiter:
+        pending = await _rate_limiter.get_pending_count()
+        decision = await _rate_limiter.check(
+            symbol=settings.scan_symbols_list[0] if settings.scan_symbols_list else "EURUSD",
+            confidence=settings.rate_limit_confidence_floor
+            + 0.1,  # early check, actual confidence from LLM
+            pending_count=pending,
+        )
+        if not decision.allowed:
+            logger.info("proposal_rate_limited_before_llm", check=decision.check_name)
+            await update.message.reply_text(
+                f"⏸ *Proposal Blocked by Rate Limiter*\n\n{decision.reason}\n\n"
+                f"_Check `/config` for current limits._",
+            )
+            return
+
     await update.message.reply_text(
-        "🤔 *Analyzing market conditions…*\n"
-        "_(this may take 10–30 seconds)_"
+        "🤔 *Analyzing market conditions…*\n_(this may take 10–30 seconds)_"
     )
 
     try:
@@ -451,6 +546,7 @@ async def proposal_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         # 2. Also try Gateway account data (may be available in Phase 4+)
         try:
             import httpx
+
             gw_resp = await httpx.AsyncClient(timeout=10).get(
                 f"{settings.gateway_base_url}/account"
             )
@@ -501,8 +597,30 @@ async def proposal_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
             return
 
+        # Post-LLM rate limit check (now we have actual confidence + symbol)
+        if _rate_limiter:
+            pending = await _rate_limiter.get_pending_count()
+            decision = await _rate_limiter.check(
+                symbol=proposal_data.symbol,
+                confidence=proposal_data.confidence,
+                pending_count=pending,
+            )
+            if not decision.allowed:
+                logger.info(
+                    "proposal_rate_limited_after_llm",
+                    check=decision.check_name,
+                    symbol=proposal_data.symbol,
+                    confidence=proposal_data.confidence,
+                )
+                await update.message.reply_text(
+                    f"⏸ *Proposal Blocked by Rate Limiter*\n\n{decision.reason}\n\n"
+                    f"_Check `/config` for current limits._",
+                )
+                return
+
         # Create proposal in DB
         from hub.app.models.proposal import Proposal
+
         proposal = Proposal(
             id=str(uuid.uuid4()),
             action=proposal_data.action,
@@ -510,7 +628,9 @@ async def proposal_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             volume=Decimal(str(proposal_data.volume)),
             confidence=proposal_data.confidence,
             reason=proposal_data.reason,
-            take_profit=Decimal(str(proposal_data.take_profit)) if proposal_data.take_profit else None,
+            take_profit=Decimal(str(proposal_data.take_profit))
+            if proposal_data.take_profit
+            else None,
             stop_loss=Decimal(str(proposal_data.stop_loss)) if proposal_data.stop_loss else None,
             timeframe=proposal_data.timeframe,
             expires_at=datetime.now(timezone.utc).replace(microsecond=0),
@@ -537,7 +657,9 @@ async def proposal_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         # Update telegram_msg_id in DB
         async with _db_session_factory() as session:
             from sqlalchemy import select
+
             from hub.app.models.proposal import Proposal as ProposalModel
+
             result = await session.execute(
                 select(ProposalModel).where(ProposalModel.id == proposal.id)
             )
@@ -546,10 +668,12 @@ async def proposal_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 db_proposal.telegram_msg_id = msg.message_id
                 await session.commit()
 
+        # Record in rate limiter
+        if _rate_limiter:
+            await _rate_limiter.record(proposal_data.symbol)
+
         # Schedule auto-reject
-        asyncio.create_task(
-            _schedule_auto_reject(proposal.id, settings.proposal_expiry_seconds)
-        )
+        asyncio.create_task(_schedule_auto_reject(proposal.id, settings.proposal_expiry_seconds))
 
     except Exception as e:
         logger.error("proposal_generation_failed", error=str(e), exc_info=True)
@@ -561,6 +685,7 @@ async def proposal_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 # ── Callback Handlers ──────────────────────────────────────────────────
+
 
 async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle ✅ Approve button."""
@@ -575,7 +700,9 @@ async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     cancel_auto_reject(proposal_id)
 
     proposal = await _transition_proposal(
-        proposal_id, "approved", f"user:{update.effective_user.id}",
+        proposal_id,
+        "approved",
+        f"user:{update.effective_user.id}",
         {"source": "telegram_approve"},
     )
     if not proposal:
@@ -589,23 +716,26 @@ async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     # In Phase 1: mock execution — just confirm
-    from hub.app.models.proposal import Proposal as ProposalModel, ProposalEvent
+    from hub.app.models.proposal import Proposal as ProposalModel
+    from hub.app.models.proposal import ProposalEvent
+
     async with _db_session_factory() as session:
         from sqlalchemy import select
-        result = await session.execute(
-            select(ProposalModel).where(ProposalModel.id == proposal_id)
-        )
+
+        result = await session.execute(select(ProposalModel).where(ProposalModel.id == proposal_id))
         p = result.scalar_one_or_none()
         if p:
             p.status = "filled"  # type: ignore[assignment]
             p.responded_at = datetime.now(timezone.utc)
-            session.add(ProposalEvent(
-                proposal_id=proposal_id,
-                from_state="approved",
-                to_state="filled",
-                actor="system",
-                extra_data={"mock": True, "note": "Phase 1 — mock execution (no real MT5)"},
-            ))
+            session.add(
+                ProposalEvent(
+                    proposal_id=proposal_id,
+                    from_state="approved",
+                    to_state="filled",
+                    actor="system",
+                    extra_data={"mock": True, "note": "Phase 1 — mock execution (no real MT5)"},
+                )
+            )
             await session.commit()
 
     await query.edit_message_text(
@@ -626,7 +756,9 @@ async def reject_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     cancel_auto_reject(proposal_id)
 
     proposal = await _transition_proposal(
-        proposal_id, "rejected", f"user:{update.effective_user.id}",
+        proposal_id,
+        "rejected",
+        f"user:{update.effective_user.id}",
         {"source": "telegram_reject"},
     )
     if not proposal:
@@ -726,11 +858,10 @@ async def fsm_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # Update proposal in DB
     async with _db_session_factory() as session:
         from sqlalchemy import select
+
         from hub.app.models.proposal import Proposal, ProposalEvent
 
-        result = await session.execute(
-            select(Proposal).where(Proposal.id == proposal_id)
-        )
+        result = await session.execute(select(Proposal).where(Proposal.id == proposal_id))
         proposal = result.scalar_one_or_none()
         if not proposal:
             await update.message.reply_text("⚠️ Proposal not found.")
@@ -745,13 +876,15 @@ async def fsm_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return
 
         proposal.volume = Decimal(str(new_volume))
-        session.add(ProposalEvent(
-            proposal_id=proposal_id,
-            from_state="pending",
-            to_state="pending",
-            actor=f"user:{user_id}",
-            extra_data={"action": "edit_volume", "new_volume": new_volume},
-        ))
+        session.add(
+            ProposalEvent(
+                proposal_id=proposal_id,
+                from_state="pending",
+                to_state="pending",
+                actor=f"user:{user_id}",
+                extra_data={"action": "edit_volume", "new_volume": new_volume},
+            )
+        )
         await session.commit()
 
     # Clear FSM
@@ -772,12 +905,14 @@ async def fsm_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 # ── Error Handler ──────────────────────────────────────────────────────
 
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle Telegram API errors gracefully."""
     logger.error("Telegram error: %s", context.error, exc_info=context.error)
 
 
 # ── Setup ──────────────────────────────────────────────────────────────
+
 
 def register_handlers(application: Application) -> None:
     """Register all command and callback handlers."""
@@ -802,9 +937,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(edit_lots_callback, pattern=r"^edit_lots:"))
 
     # FSM text handler — catches replies while in EDITING_LOTS state
-    application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, fsm_text_handler)
-    )
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fsm_text_handler))
 
     # Error handler
     application.add_handler(MessageHandler(filters.ALL, error_handler), group=-1)

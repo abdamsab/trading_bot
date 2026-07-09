@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 import pytest_asyncio
 
-from hub.app.models import Base, async_session_factory, close_db, engine, init_db
+from hub.app.models import Base
 from hub.app.models.proposal import Proposal, ProposalEvent
 from shared.schemas import ProposalStatus, TradeAction
 
@@ -33,7 +33,6 @@ async def db():
 @pytest_asyncio.fixture
 async def sample_proposal(db):
     """Create a sample pending proposal in the database."""
-    from hub.app.models.proposal import Proposal as ProposalModel
 
     proposal = Proposal(
         id=str(uuid.uuid4()),
@@ -52,6 +51,7 @@ async def sample_proposal(db):
 
 
 # ── Proposal Creation ──────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_create_proposal(db):
@@ -73,9 +73,8 @@ async def test_create_proposal(db):
 
     async with db() as session:
         from sqlalchemy import select
-        result = await session.execute(
-            select(ProposalModel).where(ProposalModel.id == proposal.id)
-        )
+
+        result = await session.execute(select(ProposalModel).where(ProposalModel.id == proposal.id))
         saved = result.scalar_one_or_none()
 
     assert saved is not None
@@ -90,32 +89,33 @@ async def test_create_proposal(db):
 
 # ── State Transitions ──────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_approve_proposal(db, sample_proposal):
     """Approve transition works and is logged."""
     async with db() as session:
         from sqlalchemy import select
-        result = await session.execute(
-            select(Proposal).where(Proposal.id == sample_proposal.id)
-        )
+
+        result = await session.execute(select(Proposal).where(Proposal.id == sample_proposal.id))
         proposal = result.scalar_one()
         proposal.status = ProposalStatus.APPROVED
         proposal.responded_at = datetime.now(timezone.utc)
 
-        session.add(ProposalEvent(
-            proposal_id=proposal.id,
-            from_state="pending",
-            to_state="approved",
-            actor="user:12345",
-            extra_data={"source": "test"},
-        ))
+        session.add(
+            ProposalEvent(
+                proposal_id=proposal.id,
+                from_state="pending",
+                to_state="approved",
+                actor="user:12345",
+                extra_data={"source": "test"},
+            )
+        )
         await session.commit()
 
     async with db() as session:
         from sqlalchemy import select
-        result = await session.execute(
-            select(Proposal).where(Proposal.id == sample_proposal.id)
-        )
+
+        result = await session.execute(select(Proposal).where(Proposal.id == sample_proposal.id))
         updated = result.scalar_one()
         assert updated.status.value == "approved"
         assert updated.responded_at is not None
@@ -126,26 +126,26 @@ async def test_reject_proposal(db, sample_proposal):
     """Reject transition works."""
     async with db() as session:
         from sqlalchemy import select
-        result = await session.execute(
-            select(Proposal).where(Proposal.id == sample_proposal.id)
-        )
+
+        result = await session.execute(select(Proposal).where(Proposal.id == sample_proposal.id))
         proposal = result.scalar_one()
         proposal.status = ProposalStatus.REJECTED
         proposal.responded_at = datetime.now(timezone.utc)
 
-        session.add(ProposalEvent(
-            proposal_id=proposal.id,
-            from_state="pending",
-            to_state="rejected",
-            actor="user:12345",
-        ))
+        session.add(
+            ProposalEvent(
+                proposal_id=proposal.id,
+                from_state="pending",
+                to_state="rejected",
+                actor="user:12345",
+            )
+        )
         await session.commit()
 
     async with db() as session:
         from sqlalchemy import select
-        result = await session.execute(
-            select(Proposal).where(Proposal.id == sample_proposal.id)
-        )
+
+        result = await session.execute(select(Proposal).where(Proposal.id == sample_proposal.id))
         updated = result.scalar_one()
         assert updated.status.value == "rejected"
 
@@ -155,27 +155,27 @@ async def test_expire_proposal(db, sample_proposal):
     """Expire transition works (auto-reject)."""
     async with db() as session:
         from sqlalchemy import select
-        result = await session.execute(
-            select(Proposal).where(Proposal.id == sample_proposal.id)
-        )
+
+        result = await session.execute(select(Proposal).where(Proposal.id == sample_proposal.id))
         proposal = result.scalar_one()
         proposal.status = ProposalStatus.EXPIRED
         proposal.responded_at = datetime.now(timezone.utc)
 
-        session.add(ProposalEvent(
-            proposal_id=proposal.id,
-            from_state="pending",
-            to_state="expired",
-            actor="auto_reject_timer",
-            extra_data={"reason": "timeout", "timeout_seconds": 300},
-        ))
+        session.add(
+            ProposalEvent(
+                proposal_id=proposal.id,
+                from_state="pending",
+                to_state="expired",
+                actor="auto_reject_timer",
+                extra_data={"reason": "timeout", "timeout_seconds": 300},
+            )
+        )
         await session.commit()
 
     async with db() as session:
         from sqlalchemy import select
-        result = await session.execute(
-            select(Proposal).where(Proposal.id == sample_proposal.id)
-        )
+
+        result = await session.execute(select(Proposal).where(Proposal.id == sample_proposal.id))
         updated = result.scalar_one()
         assert updated.status.value == "expired"
 
@@ -187,9 +187,8 @@ async def test_cannot_transition_from_final_state(db, sample_proposal):
     # This tests that our handler-level guard works
     async with db() as session:
         from sqlalchemy import select
-        result = await session.execute(
-            select(Proposal).where(Proposal.id == sample_proposal.id)
-        )
+
+        result = await session.execute(select(Proposal).where(Proposal.id == sample_proposal.id))
         proposal = result.scalar_one()
         # Simulate: proposal is already filled
         proposal.status = ProposalStatus.FILLED
@@ -206,6 +205,7 @@ async def test_cannot_transition_from_final_state(db, sample_proposal):
 
 # ── Proposal Events (Audit Log) ────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_proposal_events_are_recorded(db, sample_proposal):
     """All state transitions are logged in proposal_events."""
@@ -214,16 +214,19 @@ async def test_proposal_events_are_recorded(db, sample_proposal):
             ("approved", "user:12345"),
             ("filled", "system"),
         ]:
-            session.add(ProposalEvent(
-                proposal_id=sample_proposal.id,
-                from_state="pending" if status == "approved" else "approved",
-                to_state=status,
-                actor=actor,
-            ))
+            session.add(
+                ProposalEvent(
+                    proposal_id=sample_proposal.id,
+                    from_state="pending" if status == "approved" else "approved",
+                    to_state=status,
+                    actor=actor,
+                )
+            )
         await session.commit()
 
     async with db() as session:
         from sqlalchemy import select
+
         result = await session.execute(
             select(ProposalEvent)
             .where(ProposalEvent.proposal_id == sample_proposal.id)
@@ -238,10 +241,11 @@ async def test_proposal_events_are_recorded(db, sample_proposal):
 
 # ── Lot Editing ────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_edit_volume(db, sample_proposal):
     """Volume can be edited while proposal is pending."""
-    from shared.constants import MIN_LOT, MAX_LOT
+    from shared.constants import MAX_LOT, MIN_LOT
 
     new_volume = 0.25
 
@@ -249,25 +253,25 @@ async def test_edit_volume(db, sample_proposal):
 
     async with db() as session:
         from sqlalchemy import select
-        result = await session.execute(
-            select(Proposal).where(Proposal.id == sample_proposal.id)
-        )
+
+        result = await session.execute(select(Proposal).where(Proposal.id == sample_proposal.id))
         proposal = result.scalar_one()
         proposal.volume = new_volume
 
-        session.add(ProposalEvent(
-            proposal_id=sample_proposal.id,
-            from_state="pending",
-            to_state="pending",
-            actor="user:12345",
-            extra_data={"action": "edit_volume", "new_volume": new_volume},
-        ))
+        session.add(
+            ProposalEvent(
+                proposal_id=sample_proposal.id,
+                from_state="pending",
+                to_state="pending",
+                actor="user:12345",
+                extra_data={"action": "edit_volume", "new_volume": new_volume},
+            )
+        )
         await session.commit()
 
     async with db() as session:
         from sqlalchemy import select
-        result = await session.execute(
-            select(Proposal).where(Proposal.id == sample_proposal.id)
-        )
+
+        result = await session.execute(select(Proposal).where(Proposal.id == sample_proposal.id))
         updated = result.scalar_one()
         assert float(updated.volume) == 0.25

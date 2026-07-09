@@ -18,12 +18,14 @@ from hub.app.bot.handlers import (
     set_llm_agent,
     set_market_data_service,
     set_news_collector,
+    set_rate_limiter,
 )
 from hub.app.config import settings
 from hub.app.models import async_session_factory, close_db, init_db
 from hub.app.services.llm_agent import LLMAgent
 from hub.app.services.market_data import MarketDataService
 from hub.app.services.news_collector import NewsCollector
+from hub.app.services.rate_limiter import RateLimitEnforcer
 
 # Configure structlog
 structlog.configure(
@@ -46,6 +48,7 @@ telegram_app: Application | None = None
 llm_agent: LLMAgent | None = None
 market_data_service: MarketDataService | None = None
 news_collector: NewsCollector | None = None
+rate_limiter: RateLimitEnforcer | None = None
 
 # Provider info for health endpoint
 _llm_provider_name: str = "not_configured"
@@ -108,8 +111,12 @@ async def _run_scheduled_scan():
                 volume=Decimal(str(proposal_data.volume)),
                 confidence=proposal_data.confidence,
                 reason=proposal_data.reason,
-                take_profit=Decimal(str(proposal_data.take_profit)) if proposal_data.take_profit else None,
-                stop_loss=Decimal(str(proposal_data.stop_loss)) if proposal_data.stop_loss else None,
+                take_profit=Decimal(str(proposal_data.take_profit))
+                if proposal_data.take_profit
+                else None,
+                stop_loss=Decimal(str(proposal_data.stop_loss))
+                if proposal_data.stop_loss
+                else None,
                 timeframe=proposal_data.timeframe,
                 expires_at=datetime.now(timezone.utc),
                 market_snapshot=market_ctx or {"source": "not_available"},
@@ -228,18 +235,24 @@ async def startup():
     except Exception:
         logger.warning("news_collector_init_failed", exc_info=True)
 
+    # 5b. Initialize Rate Limiter
+    try:
+        rate_limiter = RateLimitEnforcer(async_session_factory)
+        await rate_limiter.reconstruct_from_db()
+        logger.info("rate_limiter_initialized")
+    except Exception:
+        logger.warning("rate_limiter_init_failed", exc_info=True)
+        rate_limiter = None
+
     # 6. Inject services into handlers
     set_llm_agent(llm_agent)
     set_market_data_service(market_data_service)
     set_news_collector(news_collector)
+    set_rate_limiter(rate_limiter)
 
     # 7. Build and start Telegram bot
     if settings.telegram_bot_token:
-        telegram_app = (
-            Application.builder()
-            .token(settings.telegram_bot_token)
-            .build()
-        )
+        telegram_app = Application.builder().token(settings.telegram_bot_token).build()
         register_handlers(telegram_app)
 
         await telegram_app.initialize()
@@ -287,7 +300,9 @@ async def health():
             "telegram_bot": "running" if telegram_app else "not_started",
             "llm_provider": _llm_provider_name,
             "llm_model": _llm_model_name,
-            "market_data": market_data_service.provider_name if market_data_service and market_data_service.is_configured else "not_configured",
+            "market_data": market_data_service.provider_name
+            if market_data_service and market_data_service.is_configured
+            else "not_configured",
             "news_collector": "enabled" if news_collector else "disabled",
             "scheduled_scan": settings.scan_schedule if settings.scan_enabled else "disabled",
             "mt5_gateway": "not_checked",

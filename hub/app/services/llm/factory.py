@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from typing import NoReturn
 
-from hub.app.services.llm.base import LLMProvider, ProviderError
+from hub.app.services.llm.base import LLMProvider
 from hub.app.services.llm.openai_compat import OpenAICompatibleProvider
 
 logger = logging.getLogger(__name__)
@@ -30,29 +30,29 @@ logger = logging.getLogger(__name__)
 # ── Known provider aliases and their base URLs ──────────────────────────
 
 _KNOWN_PROVIDERS: dict[str, str] = {
-    "openai":    "https://api.openai.com/v1",
+    "openai": "https://api.openai.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",
-    "groq":      "https://api.groq.com/openai/v1",
-    "together":  "https://api.together.xyz/v1",
-    "deepseek":  "https://api.deepseek.com/v1",
-    "azure":     "https://YOUR_RESOURCE.openai.azure.com",  # Must override base_url in .env
-    "ollama":    "http://localhost:11434/v1",                # Default local; override if remote
-    "vllm":      "http://localhost:8000/v1",                 # Default local; override if remote
-    "gemini":    "https://generativelanguage.googleapis.com/v1beta/openai",  # Google AI Studio / Gemini
+    "groq": "https://api.groq.com/openai/v1",
+    "together": "https://api.together.xyz/v1",
+    "deepseek": "https://api.deepseek.com/v1",
+    "azure": "https://YOUR_RESOURCE.openai.azure.com",  # Must override base_url in .env
+    "ollama": "http://localhost:11434/v1",  # Default local; override if remote
+    "vllm": "http://localhost:8000/v1",  # Default local; override if remote
+    "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",  # Google/Gemini
 }
 
 # Models that work best with each provider (good defaults)
 _DEFAULT_MODELS: dict[str, str] = {
-    "openai":    "gpt-4o-mini",
+    "openai": "gpt-4o-mini",
     "openrouter": "openai/gpt-4o-mini",
     "anthropic": "claude-sonnet-4-20250514",
-    "ollama":    "llama3",
-    "vllm":      "meta-llama/Meta-Llama-3-8B-Instruct",
-    "groq":      "llama-3.3-70b-versatile",
-    "together":  "mistralai/Mixtral-8x7B-Instruct-v0.1",
-    "deepseek":  "deepseek-chat",
-    "azure":     "gpt-4o-mini",
-    "gemini":    "gemini-2.0-flash-001",
+    "ollama": "llama3",
+    "vllm": "meta-llama/Meta-Llama-3-8B-Instruct",
+    "groq": "llama-3.3-70b-versatile",
+    "together": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+    "deepseek": "deepseek-chat",
+    "azure": "gpt-4o-mini",
+    "gemini": "gemini-2.0-flash-001",
 }
 
 
@@ -85,7 +85,11 @@ def create_provider(
 
     # Handle custom provider
     if provider_lower.startswith("custom:") or provider_lower.startswith("custom/"):
-        custom_name = provider_lower.split(":", 1)[1] if ":" in provider_lower else provider_lower.split("/", 1)[1]
+        custom_name = (
+            provider_lower.split(":", 1)[1]
+            if ":" in provider_lower
+            else provider_lower.split("/", 1)[1]
+        )
         if not base_url:
             raise ValueError(
                 f"Custom provider '{custom_name}' requires LLM_BASE_URL to be set. "
@@ -107,6 +111,7 @@ def create_provider(
     # Anthropic — separate provider (different API format)
     if provider_lower == "anthropic":
         from hub.app.services.llm.anthropic_provider import AnthropicProvider
+
         resolved_model = model or _DEFAULT_MODELS["anthropic"]
         resolved_base = base_url or "https://api.anthropic.com"
         logger.info("llm_provider_anthropic", base_url=resolved_base, model=resolved_model)
@@ -140,17 +145,61 @@ def create_provider(
 def list_supported_providers() -> list[dict[str, str]]:
     """Return a list of supported providers with descriptions."""
     return [
-        {"name": "openai",    "description": "OpenAI (GPT-4o, GPT-4o-mini, o1, o3, etc.)", "default_model": "gpt-4o-mini"},
-        {"name": "openrouter", "description": "OpenRouter (unified access to 200+ models)", "default_model": "openai/gpt-4o-mini"},
-        {"name": "anthropic", "description": "Anthropic (Claude Sonnet 4, Haiku 3.5, etc.)",  "default_model": "claude-sonnet-4-20250514"},
-        {"name": "ollama",    "description": "Ollama (self-hosted local models)",              "default_model": "llama3"},
-        {"name": "vllm",      "description": "vLLM (self-hosted high-throughput serving)",     "default_model": "meta-llama/Meta-Llama-3-8B-Instruct"},
-        {"name": "groq",      "description": "Groq (ultra-fast inference)",                    "default_model": "llama-3.3-70b-versatile"},
-        {"name": "together",  "description": "Together AI (broad model catalogue)",            "default_model": "mistralai/Mixtral-8x7B-Instruct-v0.1"},
-        {"name": "deepseek",  "description": "DeepSeek (cost-effective Chinese model)",        "default_model": "deepseek-chat"},
-        {"name": "azure",     "description": "Azure OpenAI (enterprise)",                      "default_model": "gpt-4o-mini"},
-        {"name": "gemini",    "description": "Google Gemini (Gemini 2.0 Flash, Pro, etc.)",    "default_model": "gemini-2.0-flash-001"},
-        {"name": "custom:<name>", "description": "Any OpenAI-compatible endpoint you host yourself", "default_model": "any"},
+        {
+            "name": "openai",
+            "description": "OpenAI (GPT-4o, GPT-4o-mini, o1, o3, etc.)",
+            "default_model": "gpt-4o-mini",
+        },
+        {
+            "name": "openrouter",
+            "description": "OpenRouter (unified access to 200+ models)",
+            "default_model": "openai/gpt-4o-mini",
+        },
+        {
+            "name": "anthropic",
+            "description": "Anthropic (Claude Sonnet 4, Haiku 3.5, etc.)",
+            "default_model": "claude-sonnet-4-20250514",
+        },
+        {
+            "name": "ollama",
+            "description": "Ollama (self-hosted local models)",
+            "default_model": "llama3",
+        },
+        {
+            "name": "vllm",
+            "description": "vLLM (self-hosted high-throughput serving)",
+            "default_model": "meta-llama/Meta-Llama-3-8B-Instruct",
+        },
+        {
+            "name": "groq",
+            "description": "Groq (ultra-fast inference)",
+            "default_model": "llama-3.3-70b-versatile",
+        },
+        {
+            "name": "together",
+            "description": "Together AI (broad model catalogue)",
+            "default_model": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+        },
+        {
+            "name": "deepseek",
+            "description": "DeepSeek (cost-effective Chinese model)",
+            "default_model": "deepseek-chat",
+        },
+        {
+            "name": "azure",
+            "description": "Azure OpenAI (enterprise)",
+            "default_model": "gpt-4o-mini",
+        },
+        {
+            "name": "gemini",
+            "description": "Google Gemini (Gemini 2.0 Flash, Pro, etc.)",
+            "default_model": "gemini-2.0-flash-001",
+        },
+        {
+            "name": "custom:<name>",
+            "description": "Any OpenAI-compatible endpoint you host yourself",
+            "default_model": "any",
+        },
     ]
 
 

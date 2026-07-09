@@ -11,7 +11,6 @@ import pytest
 
 from hub.app.services.news_collector import NewsCollector
 
-
 # ── Sample RSS feed XML ────────────────────────────────────────────────
 
 _RSS_XML = """<?xml version="1.0" encoding="UTF-8"?>
@@ -136,11 +135,29 @@ class TestFetch:
     async def test_fetch_returns_filtered_headlines(self):
         c = NewsCollector(max_headlines=10)
 
-        with patch.object(c, "_fetch_feed", AsyncMock(return_value=[
-            {"title": "EUR/USD Rises on ECB Decision", "published": "2026-01-01", "source": "forexfactory"},
-            {"title": "Gold Hits New All-Time High", "published": "2026-01-01", "source": "forexfactory"},
-            {"title": "Apple Unveils New MacBook", "published": "2026-01-01", "source": "forexfactory"},
-        ])):
+        with patch.object(
+            c,
+            "_fetch_feed",
+            AsyncMock(
+                return_value=[
+                    {
+                        "title": "EUR/USD Rises on ECB Decision",
+                        "published": "2026-01-01",
+                        "source": "forexfactory",
+                    },
+                    {
+                        "title": "Gold Hits New All-Time High",
+                        "published": "2026-01-01",
+                        "source": "forexfactory",
+                    },
+                    {
+                        "title": "Apple Unveils New MacBook",
+                        "published": "2026-01-01",
+                        "source": "forexfactory",
+                    },
+                ]
+            ),
+        ):
             headlines = await c.fetch()
 
         assert "EUR/USD Rises on ECB Decision" in headlines
@@ -152,10 +169,16 @@ class TestFetch:
     async def test_fetch_without_relevance_filter(self):
         c = NewsCollector(max_headlines=10, relevance_filter=False)
 
-        with patch.object(c, "_fetch_feed", AsyncMock(return_value=[
-            {"title": "EUR/USD Rises", "published": "2026-01-01", "source": "forexfactory"},
-            {"title": "Apple News", "published": "2026-01-01", "source": "forexfactory"},
-        ])):
+        with patch.object(
+            c,
+            "_fetch_feed",
+            AsyncMock(
+                return_value=[
+                    {"title": "EUR/USD Rises", "published": "2026-01-01", "source": "forexfactory"},
+                    {"title": "Apple News", "published": "2026-01-01", "source": "forexfactory"},
+                ]
+            ),
+        ):
             headlines = await c.fetch()
 
         assert len(headlines) == 2
@@ -165,11 +188,21 @@ class TestFetch:
     async def test_fetch_deduplicates(self):
         c = NewsCollector(max_headlines=10)
 
-        with patch.object(c, "_fetch_feed", AsyncMock(return_value=[
-            {"title": "EUR/USD Rises", "published": "2026-01-01", "source": "forexfactory"},
-            # Same title from another source
-            {"title": "EUR/USD Rises", "published": "2026-01-01", "source": "investing_com"},
-        ])):
+        with patch.object(
+            c,
+            "_fetch_feed",
+            AsyncMock(
+                return_value=[
+                    {"title": "EUR/USD Rises", "published": "2026-01-01", "source": "forexfactory"},
+                    # Same title from another source
+                    {
+                        "title": "EUR/USD Rises",
+                        "published": "2026-01-01",
+                        "source": "investing_com",
+                    },
+                ]
+            ),
+        ):
             headlines = await c.fetch()
 
         assert len(headlines) == 1  # Deduplicated
@@ -199,11 +232,25 @@ class TestFetch:
     async def test_respects_max_headlines(self):
         c = NewsCollector(max_headlines=2)
 
-        with patch.object(c, "_fetch_feed", AsyncMock(return_value=[
-            {"title": "EUR/USD Rises", "published": "2026-01-01", "source": "forexfactory"},
-            {"title": "Gold at Record High", "published": "2026-01-01", "source": "forexfactory"},
-            {"title": "Fed Minutes Released", "published": "2026-01-01", "source": "forexfactory"},
-        ])):
+        with patch.object(
+            c,
+            "_fetch_feed",
+            AsyncMock(
+                return_value=[
+                    {"title": "EUR/USD Rises", "published": "2026-01-01", "source": "forexfactory"},
+                    {
+                        "title": "Gold at Record High",
+                        "published": "2026-01-01",
+                        "source": "forexfactory",
+                    },
+                    {
+                        "title": "Fed Minutes Released",
+                        "published": "2026-01-01",
+                        "source": "forexfactory",
+                    },
+                ]
+            ),
+        ):
             headlines = await c.fetch()
 
         assert len(headlines) == 2

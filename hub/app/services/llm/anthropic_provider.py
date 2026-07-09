@@ -178,8 +178,10 @@ class AnthropicProvider(LLMProvider):
 
             except httpx.TimeoutException as e:
                 last_error = ProviderError(
-                    "Request timed out", provider=self.provider_name,
-                    model=self._model, cause=e,
+                    "Request timed out",
+                    provider=self.provider_name,
+                    model=self._model,
+                    cause=e,
                 )
                 if attempt < self._max_retries:
                     await _exponential_backoff(attempt)
@@ -188,8 +190,10 @@ class AnthropicProvider(LLMProvider):
 
             except httpx.RequestError as e:
                 last_error = ProviderError(
-                    f"Network error: {e}", provider=self.provider_name,
-                    model=self._model, cause=e,
+                    f"Network error: {e}",
+                    provider=self.provider_name,
+                    model=self._model,
+                    cause=e,
                 )
                 if attempt < self._max_retries:
                     await _exponential_backoff(attempt)
@@ -197,11 +201,14 @@ class AnthropicProvider(LLMProvider):
                 raise last_error
 
         raise last_error or ProviderError(
-            "Unknown error", provider=self.provider_name, model=self._model,
+            "Unknown error",
+            provider=self.provider_name,
+            model=self._model,
         )
 
 
 async def _exponential_backoff(attempt: int) -> None:
     import asyncio
+
     delay = min(2 ** (attempt + 1), 30)
     await asyncio.sleep(delay)
