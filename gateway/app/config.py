@@ -1,42 +1,61 @@
-"""Gateway application configuration via environment variables."""
+"""Gateway configuration — loaded from environment variables."""
 
 from __future__ import annotations
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Settings(BaseSettings):
+class GatewaySettings(BaseSettings):
+    """Settings for the MT5 Execution Gateway service."""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
-    # ── Server ──────────────────────────────────────────────────────
-    host: str = "0.0.0.0"
-    port: int = 9000
+    # ── Networking ───────────────────────────────────────────────────
+    GATEWAY_HOST: str = "0.0.0.0"
+    GATEWAY_PORT: int = 9000
 
-    # ── HMAC Auth ───────────────────────────────────────────────────
-    hmac_secret: str = "dev-secret-change-in-production"
+    # ── Authentication (shared secret with Hub) ──────────────────────
+    GATEWAY_HMAC_SECRET: str = "change-me-to-a-random-64-char-string"
 
-    # ── MT5 ─────────────────────────────────────────────────────────
-    mt5_account: int = 0
-    mt5_password: str = ""
-    mt5_server: str = ""
+    # ── MT5 Connection ───────────────────────────────────────────────
+    MT5_ACCOUNT: int | None = None
+    MT5_PASSWORD: str = ""
+    MT5_SERVER: str = ""
+    # Path to MT5 terminal executable (leave empty to auto-detect)
+    MT5_TERMINAL_PATH: str = ""
 
-    # ── Risk Limits ─────────────────────────────────────────────────
-    risk_max_single_lot: float = 10.0
-    risk_max_daily_volume: float = 50.0
-    risk_max_open_positions: int = 10
-    risk_max_exposure_pct: float = 30.0
-    risk_allowed_symbols: str = "EURUSD,GBPUSD,USDJPY,XAUUSD"
+    # ── Risk Limits ──────────────────────────────────────────────────
+    RISK_MAX_SINGLE_LOT: float = 10.0
+    RISK_MAX_DAILY_VOLUME: float = 50.0
+    RISK_MAX_OPEN_POSITIONS: int = 10
+    RISK_MAX_EXPOSURE_PCT: float = 30.0
+    RISK_ALLOWED_SYMBOLS: str = "EURUSD,GBPUSD,USDJPY,XAUUSD"
+    # Comma-separated list of symbols allowed for trading
 
-    # ── Logging ─────────────────────────────────────────────────────
-    log_level: str = "INFO"
+    # ── Mock Mode (for development on Linux without MT5) ─────────────
+    MT5_MOCK: bool = True  # auto-true when MetaTrader5 not importable
+
+    # ── Logging ──────────────────────────────────────────────────────
+    LOG_LEVEL: str = "INFO"
+
+    # ── Derived helpers ──────────────────────────────────────────────
 
     @property
-    def allowed_symbols_list(self) -> list[str]:
-        return [s.strip() for s in self.risk_allowed_symbols.split(",") if s.strip()]
+    def allowed_symbols(self) -> list[str]:
+        return [s.strip().upper() for s in self.RISK_ALLOWED_SYMBOLS.split(",") if s.strip()]
 
+    @property
+    def is_mock(self) -> bool:
+        """True when we can't load the real MetaTrader5 module."""
+        if self.MT5_MOCK:
+            return True
+        try:
+            import MetaTrader5  # noqa: F401
 
-settings = Settings()
+            return False
+        except ImportError:
+            return True
