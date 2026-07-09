@@ -24,7 +24,6 @@ from hub.app.bot.keyboards import (
     proposal_keyboard,
 )
 from hub.app.bot.messages import (
-    render_approval_confirmation,
     render_expired,
     render_proposal,
     render_rejection,
@@ -688,7 +687,7 @@ async def proposal_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle ✅ Approve button."""
+    """Handle ✅ Approve button — submit trade to Gateway."""
     if not _is_authorized(update):
         await update.callback_query.answer("⛔ Unauthorized", show_alert=True)
         return
@@ -715,32 +714,229 @@ async def approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
         return
 
-    # In Phase 1: mock execution — just confirm
-    from hub.app.models.proposal import Proposal as ProposalModel
-    from hub.app.models.proposal import ProposalEvent
-
-    async with _db_session_factory() as session:
-        from sqlalchemy import select
-
-        result = await session.execute(select(ProposalModel).where(ProposalModel.id == proposal_id))
-        p = result.scalar_one_or_none()
-        if p:
-            p.status = "filled"  # type: ignore[assignment]
-            p.responded_at = datetime.now(timezone.utc)
-            session.add(
-                ProposalEvent(
-                    proposal_id=proposal_id,
-                    from_state="approved",
-                    to_state="filled",
-                    actor="system",
-                    extra_data={"mock": True, "note": "Phase 1 — mock execution (no real MT5)"},
-                )
-            )
-            await session.commit()
-
+    # ── Acknowledge approval immediately ──────────────────────────
     await query.edit_message_text(
-        render_approval_confirmation(proposal, ticket_id=12345, fill_price=1.1045),
+        f"⏳ *Submitting trade…*\n\n"
+        f"{proposal.action.value} {proposal.symbol} · {proposal.volume:.2f} lots\n\n"
+        f"Waiting for Gateway response...",
     )
+
+    # ── 1. Hub-level risk validation ──────────────────────────
+    import httpx
+
+    from hub.app.services.risk import fetch_account_info, validate_order
+    from shared.schemas import ApprovalRequest
+
+    account_info = await fetch_account_info()
+
+    order = ApprovalRequest(
+        proposal_id=proposal_id,
+        action=proposal.action,
+        symbol=proposal.symbol,
+        volume=proposal.volume,
+        take_profit=proposal.take_profit,
+        stop_loss=proposal.stop_loss,
+    )
+
+    risk_violations = validate_order(order, account_info=account_info)
+
+    # Check daily volume (uses DB session)
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select
+
+    from hub.app.models.proposal import Proposal as ProposalModel
+
+    daily_volume = Decimal("0")
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    async with _db_session_factory() as session:
+        result = await session.execute(
+            select(ProposalModel).where(
+                ProposalModel.status == "filled",
+                ProposalModel.responded_at >= today_start,
+            )
+        )
+        filled_today = result.scalars().all()
+        for fp in filled_today:
+            daily_volume += fp.volume
+
+    max_daily = Decimal(str(settings.risk_max_daily_volume))
+    if daily_volume + order.volume > max_daily:
+        risk_violations.append(
+            f"Daily volume {daily_volume + order.volume:.2f} exceeds "
+            f"max allowed ({settings.risk_max_daily_volume})"
+        )
+
+    if risk_violations:
+        logger.warning(
+            "risk_validation_failed",
+            proposal_id=proposal_id,
+            violations=risk_violations,
+        )
+        await _transition_proposal(
+            proposal_id,
+            "failed",
+            "risk_check",
+            {"violations": risk_violations},
+        )
+        from hub.app.bot.messages import render_risk_blocked
+
+        await query.edit_message_text(
+            render_risk_blocked(proposal, risk_violations),
+        )
+        return
+
+    # ── 2. Sign payload and POST to Gateway ────────────────────
+    from shared.utils.crypto import sign_payload
+
+    signature, timestamp = sign_payload(
+        order.model_dump(mode="json"),
+        settings.gateway_hmac_secret,
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            gw_resp = await client.post(
+                f"{settings.gateway_base_url}/trade",
+                json=order.model_dump(mode="json"),
+                headers={
+                    "X-Signature": signature,
+                    "X-Timestamp": str(timestamp),
+                },
+            )
+    except httpx.TimeoutException:
+        logger.error("gateway_timeout", proposal_id=proposal_id)
+        await _transition_proposal(
+            proposal_id,
+            "failed",
+            "gateway",
+            {"error": "timeout"},
+        )
+        from hub.app.bot.messages import render_gateway_timeout
+
+        await query.edit_message_text(render_gateway_timeout(proposal))
+        return
+    except httpx.ConnectError:
+        logger.error("gateway_unreachable", proposal_id=proposal_id)
+        await _transition_proposal(
+            proposal_id,
+            "failed",
+            "gateway",
+            {"error": "unreachable"},
+        )
+        from hub.app.bot.messages import render_gateway_timeout
+
+        await query.edit_message_text(render_gateway_timeout(proposal))
+        return
+
+    # ── 3. Handle Gateway response ─────────────────────────────
+    if gw_resp.status_code in (401, 403):
+        logger.error(
+            "gateway_auth_failed",
+            proposal_id=proposal_id,
+            status=gw_resp.status_code,
+        )
+        await _transition_proposal(
+            proposal_id,
+            "failed",
+            "gateway",
+            {"error": f"HTTP {gw_resp.status_code}", "response": gw_resp.text},
+        )
+        from hub.app.bot.messages import render_gateway_auth_error
+
+        await query.edit_message_text(render_gateway_auth_error(proposal))
+        return
+
+    if gw_resp.status_code != 200:
+        logger.error(
+            "gateway_error_status",
+            proposal_id=proposal_id,
+            status=gw_resp.status_code,
+            response=gw_resp.text,
+        )
+        await _transition_proposal(
+            proposal_id,
+            "failed",
+            "gateway",
+            {"error": f"HTTP {gw_resp.status_code}", "response": gw_resp.text},
+        )
+        await query.edit_message_text(
+            f"⚠️ *Gateway Error (HTTP {gw_resp.status_code})*\n\nPlease try again or contact admin.",
+        )
+        return
+
+    try:
+        result_data = gw_resp.json()
+    except Exception:
+        logger.error("gateway_invalid_json", proposal_id=proposal_id)
+        await _transition_proposal(
+            proposal_id,
+            "failed",
+            "gateway",
+            {"error": "invalid JSON response"},
+        )
+        await query.edit_message_text("⚠️ *Invalid response from Gateway.*")
+        return
+
+    # ── 4. Parse ExecutionResult ───────────────────────────────
+    from shared.schemas import ExecutionResult
+
+    try:
+        result = ExecutionResult(**result_data)
+    except Exception as exc:
+        logger.error("gateway_result_parse_error", error=str(exc))
+        await _transition_proposal(
+            proposal_id,
+            "failed",
+            "gateway",
+            {"error": f"parse error: {exc}"},
+        )
+        await query.edit_message_text("⚠️ *Unexpected response format from Gateway.*")
+        return
+
+    if result.success and result.status in ("filled", "submitted"):
+        logger.info(
+            "trade_filled",
+            proposal_id=proposal_id,
+            ticket_id=result.ticket_id,
+            fill_price=str(result.fill_price) if result.fill_price else None,
+        )
+        await _transition_proposal(
+            proposal_id,
+            "filled",
+            "gateway",
+            {
+                "ticket_id": result.ticket_id,
+                "fill_price": str(result.fill_price) if result.fill_price else None,
+                "status": result.status,
+            },
+        )
+        from hub.app.bot.messages import render_approval_confirmation
+
+        await query.edit_message_text(
+            render_approval_confirmation(
+                proposal,
+                ticket_id=result.ticket_id or 0,
+                fill_price=float(result.fill_price) if result.fill_price else 0.0,
+            ),
+        )
+    else:
+        logger.warning(
+            "trade_rejected_by_gateway",
+            proposal_id=proposal_id,
+            error=result.error_message,
+        )
+        await _transition_proposal(
+            proposal_id,
+            "failed",
+            "gateway",
+            {"error": result.error_message or "unknown"},
+        )
+        from hub.app.bot.messages import render_gateway_error
+
+        await query.edit_message_text(
+            render_gateway_error(proposal, result.error_message or "Unknown error"),
+        )
 
 
 async def reject_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

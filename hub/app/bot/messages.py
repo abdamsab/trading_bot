@@ -103,6 +103,33 @@ def render_risk_blocked(proposal: Proposal, reasons: list[str]) -> str:
     )
 
 
+def render_gateway_error(proposal: Proposal, error: str) -> str:
+    """Gateway returned an error response."""
+    return (
+        f"⚠️ *Trade Submission Failed*\n\n"
+        f"{proposal.action.value} {proposal.symbol} · {proposal.volume:.2f} lots\n\n"
+        f"Gateway responded:\n`{error}`"
+    )
+
+
+def render_gateway_auth_error(proposal: Proposal) -> str:
+    """Gateway rejected the HMAC signature."""
+    return (
+        f"⚠️ *Security Error — Contact Admin*\n\n"
+        f"{proposal.action.value} {proposal.symbol} · {proposal.volume:.2f} lots\n\n"
+        f"Gateway authentication failed.  The HMAC secret may have changed."
+    )
+
+
+def render_gateway_timeout(proposal: Proposal) -> str:
+    """Gateway was unreachable or timed out."""
+    return (
+        f"⚠️ *Gateway Unreachable*\n\n"
+        f"{proposal.action.value} {proposal.symbol} · {proposal.volume:.2f} lots\n\n"
+        f"Could not reach the execution gateway.  Please try again in a few minutes."
+    )
+
+
 # ── Helpers ────────────────────────────────────────────────────────────
 
 
