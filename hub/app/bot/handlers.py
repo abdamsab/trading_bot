@@ -56,12 +56,33 @@ _auto_reject_tasks: dict[str, asyncio.Task] = {}
 # ── Injected DB session (set during setup) ─────────────────────────────
 
 _db_session_factory = None
+_llm_agent = None
+_market_data_service = None
+_news_collector = None
 
 
 def set_db_session_factory(factory):
     """Inject the DB session factory from main.py."""
     global _db_session_factory
     _db_session_factory = factory
+
+
+def set_llm_agent(agent):
+    """Inject the LLM Agent instance from main.py."""
+    global _llm_agent
+    _llm_agent = agent
+
+
+def set_market_data_service(service):
+    """Inject the MarketDataService from main.py."""
+    global _market_data_service
+    _market_data_service = service
+
+
+def set_news_collector(collector):
+    """Inject the NewsCollector from main.py."""
+    global _news_collector
+    _news_collector = collector
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
@@ -86,7 +107,7 @@ async def _get_proposal(proposal_id: str):
         return result.scalar_one_or_none()
 
 
-async def _save_proposal(proposal) -> None:
+async def _save_proposal(proposal, *, source: str = "manual") -> None:
     """Persist a proposal and its initial event."""
     from hub.app.models.proposal import ProposalEvent
 
@@ -97,7 +118,7 @@ async def _save_proposal(proposal) -> None:
             from_state=None,
             to_state=proposal.status.value,
             actor="system",
-            extra_data={"source": "mock_proposal"},
+            extra_data={"source": source},
         ))
         await session.commit()
 
@@ -221,6 +242,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "I'm your AI trading assistant. I generate trade proposals "
         "from market data and send them here for your approval.\n\n"
         "*Commands:*\n"
+        "`/proposal` — Generate an AI trade proposal\n"
         "`/mock_proposal` — Generate a test proposal\n"
         "`/status` — System health\n"
         "`/pause` / `/resume` — Stop/start proposals\n"
@@ -237,6 +259,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(
         "📋 *Commands*\n\n"
         "`/start` — Welcome & overview\n"
+        "`/proposal` — Generate an AI trade proposal\n"
         "`/mock_proposal` — Generate a test proposal\n"
         "`/status` — System health\n"
         "`/pause` — Pause proposal generation\n"
@@ -252,10 +275,11 @@ async def status_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not _is_authorized(update):
         return
     paused_status = "⏸ *Paused*" if _proposal_paused else "▶ *Active*"
+    provider_status = "⏳ *Initializing…*" if _llm_agent is None else f"✅ `{_llm_agent.provider.provider_name}` / `{_llm_agent.provider.model_name}`"
     await update.message.reply_text(
         f"🩺 *System Status*\n\n"
         f"Proposal Engine: {paused_status}\n"
-        f"Model: `{settings.llm_model}`\n"
+        f"LLM Provider: {provider_status}\n"
         f"Gateway: `{settings.gateway_base_url}`\n"
         f"Pending Proposals: `(check DB)`\n"
         f"Auto-Reject: `{settings.proposal_expiry_seconds}s`\n"
@@ -356,7 +380,7 @@ async def mock_proposal_handler(update: Update, context: ContextTypes.DEFAULT_TY
         llm_raw_output=data,
     )
 
-    await _save_proposal(proposal)
+    await _save_proposal(proposal, source="mock")
 
     # Send to Telegram
     msg = await update.message.reply_text(
@@ -381,6 +405,159 @@ async def mock_proposal_handler(update: Update, context: ContextTypes.DEFAULT_TY
     asyncio.create_task(
         _schedule_auto_reject(proposal.id, settings.proposal_expiry_seconds)
     )
+
+
+# ── Real LLM Proposal Handler ───────────────────────────────────────────
+
+
+async def proposal_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /proposal — generate a real trade proposal from the LLM."""
+    if not _is_authorized(update):
+        return
+    if _proposal_paused:
+        await update.message.reply_text("⏸ System is paused. Use `/resume` first.")
+        return
+    if _llm_agent is None:
+        await update.message.reply_text(
+            "⚠️ LLM provider not configured.\n"
+            "Check your `LLM_PROVIDER` and `LLM_API_KEY` settings in `.env`."
+        )
+        return
+
+    await update.message.reply_text(
+        "🤔 *Analyzing market conditions…*\n"
+        "_(this may take 10–30 seconds)_"
+    )
+
+    try:
+        # ── Gather market context ────────────────────────────────────
+        market_data: dict[str, Any] | None = None
+        news_headlines: list[str] | None = None
+
+        # 1. Get real-time prices from MarketDataService
+        prices: dict[str, Any] = {}
+        if _market_data_service and _market_data_service.is_configured:
+            for sym in settings.scan_symbols_list:
+                snap = await _market_data_service.fetch_snapshot(sym)
+                if "error" not in snap:
+                    prices[sym] = snap
+            if prices:
+                market_data = {
+                    "prices": prices,
+                    "source": "market_data_service",
+                }
+                logger.info("market_data_fetched", symbols=list(prices.keys()))
+
+        # 2. Also try Gateway account data (may be available in Phase 4+)
+        try:
+            import httpx
+            gw_resp = await httpx.AsyncClient(timeout=10).get(
+                f"{settings.gateway_base_url}/account"
+            )
+            if gw_resp.status_code == 200:
+                acct = gw_resp.json()
+                gw_data = {
+                    "account_balance": acct.get("balance"),
+                    "account_equity": acct.get("equity"),
+                    "open_positions": acct.get("open_positions"),
+                    "source": "gateway",
+                }
+                if market_data:
+                    market_data.update(gw_data)
+                else:
+                    market_data = gw_data
+        except Exception:
+            logger.debug("Gateway not reachable — proceeding without account data")
+
+        # 3. Get news headlines if enabled
+        if _news_collector and settings.news_enabled:
+            try:
+                news_headlines = await _news_collector.fetch(symbols=settings.scan_symbols_list)
+                if news_headlines and any("feed unavailable" in h.lower() for h in news_headlines):
+                    logger.debug("news_feeds_unreachable — using fallback headlines")
+            except Exception:
+                logger.debug("news_collector_failed")
+                news_headlines = None
+
+        # Generate proposal via LLM
+        proposal_data, llm_response = await _llm_agent.generate_proposal(
+            market_data=market_data,
+            news_headlines=news_headlines,
+        )
+
+        # Skip HOLD proposals — log but don't send
+        if proposal_data.action == "HOLD":
+            logger.info(
+                "llm_hold_skipped",
+                reason=proposal_data.reason,
+                confidence=proposal_data.confidence,
+            )
+            await update.message.reply_text(
+                "📊 *Analysis Complete — No Trade Recommended*\n\n"
+                f"*Reason:* {proposal_data.reason}\n"
+                f"*Confidence:* {proposal_data.confidence:.0%}\n\n"
+                "The LLM doesn't see a good opportunity right now. "
+                "Try again later with `/proposal`."
+            )
+            return
+
+        # Create proposal in DB
+        from hub.app.models.proposal import Proposal
+        proposal = Proposal(
+            id=str(uuid.uuid4()),
+            action=proposal_data.action,
+            symbol=proposal_data.symbol,
+            volume=Decimal(str(proposal_data.volume)),
+            confidence=proposal_data.confidence,
+            reason=proposal_data.reason,
+            take_profit=Decimal(str(proposal_data.take_profit)) if proposal_data.take_profit else None,
+            stop_loss=Decimal(str(proposal_data.stop_loss)) if proposal_data.stop_loss else None,
+            timeframe=proposal_data.timeframe,
+            expires_at=datetime.now(timezone.utc).replace(microsecond=0),
+            market_snapshot=market_data or {"source": "not_available"},
+            llm_model=llm_response.model,
+            llm_raw_output={
+                "provider": llm_response.provider,
+                "input_tokens": llm_response.input_tokens,
+                "output_tokens": llm_response.output_tokens,
+                "latency_ms": round(llm_response.latency_ms, 0),
+                "raw_text": llm_response.text,
+            },
+        )
+
+        await _save_proposal(proposal, source="llm")
+
+        # Send to Telegram
+        msg = await update.message.reply_text(
+            render_proposal(proposal),
+            reply_markup=proposal_keyboard(proposal.id),
+        )
+        proposal.telegram_msg_id = msg.message_id
+
+        # Update telegram_msg_id in DB
+        async with _db_session_factory() as session:
+            from sqlalchemy import select
+            from hub.app.models.proposal import Proposal as ProposalModel
+            result = await session.execute(
+                select(ProposalModel).where(ProposalModel.id == proposal.id)
+            )
+            db_proposal = result.scalar_one_or_none()
+            if db_proposal:
+                db_proposal.telegram_msg_id = msg.message_id
+                await session.commit()
+
+        # Schedule auto-reject
+        asyncio.create_task(
+            _schedule_auto_reject(proposal.id, settings.proposal_expiry_seconds)
+        )
+
+    except Exception as e:
+        logger.error("proposal_generation_failed", error=str(e), exc_info=True)
+        await update.message.reply_text(
+            "⚠️ *Failed to generate proposal.*\n\n"
+            f"Error: `{e}`\n\n"
+            "Try again later. Check logs if the issue persists."
+        )
 
 
 # ── Callback Handlers ──────────────────────────────────────────────────
@@ -616,6 +793,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("proposals", proposals_handler))
     application.add_handler(CommandHandler("config", config_handler))
     application.add_handler(CommandHandler("mock_proposal", mock_proposal_handler))
+    application.add_handler(CommandHandler("proposal", proposal_handler))
     application.add_handler(CommandHandler("cancel", cancel_fsm_handler))
 
     # Callbacks

@@ -1,4 +1,8 @@
-"""Hub application configuration via environment variables."""
+"""Hub application configuration via environment variables.
+
+Supports any LLM provider — cloud-hosted or self-hosted.
+See LLM_PROVIDER docs for the full list of supported providers.
+"""
 
 from __future__ import annotations
 
@@ -17,8 +21,17 @@ class Settings(BaseSettings):
     user_telegram_id: int = 0
 
     # ── LLM Provider ────────────────────────────────────────────────
+    # Provider name: openai, openrouter, anthropic, ollama, vllm, groq,
+    # together, deepseek, azure, or custom:<name> for your own hosted endpoint.
+    llm_provider: str = "openai"
     llm_api_key: str = ""
-    llm_model: str = "gpt-4o-mini"
+    llm_model: str = ""  # Empty = use provider default
+    # Base URL override. Required for custom:<name> providers and Azure.
+    # Examples:
+    #   Self-hosted vLLM: http://192.168.1.50:8000/v1
+    #   Self-hosted Ollama: http://192.168.1.50:11434/v1
+    #   Azure: https://my-resource.openai.azure.com
+    llm_base_url: str = ""
 
     # ── Database ────────────────────────────────────────────────────
     database_url: str = "sqlite+aiosqlite:///./tradebot.db"
@@ -45,9 +58,66 @@ class Settings(BaseSettings):
     # ── Logging ─────────────────────────────────────────────────────
     log_level: str = "INFO"
 
+    # ── Market Data ──────────────────────────────────────────────────
+    # Provider: "twelve_data" or "alpha_vantage" (empty = disabled)
+    market_data_provider: str = ""
+    market_data_api_key: str = ""
+
+    # ── News ─────────────────────────────────────────────────────────
+    # Enable fetching forex headlines from RSS feeds
+    news_enabled: bool = True
+    news_max_headlines: int = 5
+
+    # ── Scheduled Scanning ───────────────────────────────────────────
+    # Enable automated proposal generation on a timer (APScheduler)
+    scan_enabled: bool = False
+    # Cron expression or interval. Examples:
+    #   "0 */4 * * *"   — every 4 hours
+    #   "0 7,12,17 * * 1-5" — Mon-Fri at 7am, 12pm, 5pm
+    scan_schedule: str = "0 */4 * * *"
+    # Symbols to scan (comma-sep). Empty = use risk_allowed_symbols
+    scan_symbols: str = ""
+
     @property
     def allowed_symbols_list(self) -> list[str]:
         return [s.strip() for s in self.risk_allowed_symbols.split(",") if s.strip()]
+
+    @property
+    def scan_symbols_list(self) -> list[str]:
+        if self.scan_symbols.strip():
+            return [s.strip() for s in self.scan_symbols.split(",") if s.strip()]
+        return self.allowed_symbols_list
+
+    def create_llm_provider(self) -> LLMProvider:
+        """Create and return a configured LLM provider instance.
+
+        Uses llm_provider, llm_api_key, llm_model, and llm_base_url from env.
+        This is called once at startup and the result is cached by the caller.
+        """
+        from hub.app.services.llm.factory import create_provider
+        return create_provider(
+            provider_name=self.llm_provider,
+            api_key=self.llm_api_key,
+            model=self.llm_model,
+            base_url=self.llm_base_url,
+        )
+
+    def create_market_data_service(self) -> "MarketDataService":
+        """Create a configured MarketDataService (or None if not configured)."""
+        from hub.app.services.market_data import MarketDataService
+
+        return MarketDataService(
+            provider=self.market_data_provider or "twelve_data",
+            api_key=self.market_data_api_key,
+        )
+
+    def create_news_collector(self) -> "NewsCollector":
+        """Create a configured NewsCollector."""
+        from hub.app.services.news_collector import NewsCollector
+
+        return NewsCollector(
+            max_headlines=self.news_max_headlines,
+        )
 
 
 settings = Settings()

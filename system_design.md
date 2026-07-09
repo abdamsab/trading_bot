@@ -142,9 +142,104 @@ A semi-automated AI trading assistant that:
 - Run scheduled monitoring pulses
 - Log all events for audit
 
-### 3.2 Telegram Bot (python-telegram-bot)
+#### 3.1.1 LLM Provider Abstraction
 
-**Interaction Modes:**
+The Intelligence Hub uses a **provider-agnostic** LLM abstraction layer. Any provider supporting chat completions can be plugged in without code changes.
+
+**Architecture:**
+
+```
+hub/app/services/llm/
+├── __init__.py           # Re-exports: create_provider(), get_supported_providers()
+├── base.py               # Abstract base class + data types
+├── openai_compat.py      # OpenAI-compatible API adapter
+├── anthropic_provider.py # Anthropic Messages API adapter
+└── factory.py            # Provider selection & instantiation
+```
+
+**Abstract Base (`LLMProvider`):**
+- `chat_completion(system_prompt, user_prompt, *, temperature, max_tokens, response_format_type) -> LLMResponse`
+- Properties: `provider_name`, `model_name`
+
+**`LLMResponse` dataclass:**
+- `text` — raw response text
+- `model` — model used
+- `provider` — provider name
+- `input_tokens`, `output_tokens` — usage stats
+- `latency_ms` — wall-clock time
+- `raw` — full API response (for audit logging)
+
+**Supported Providers:**
+
+| LLM_PROVIDER  | Adapter Class           | Notes                                                       |
+|---------------|-------------------------|-------------------------------------------------------------|
+| `openai`      | OpenAICompatibleProvider| GPT-4o, GPT-4o-mini, o1, o3                                |
+| `openrouter`  | OpenAICompatibleProvider| Any model via OpenRouter                                    |
+| `together`    | OpenAICompatibleProvider| Llama, Mistral, DeepSeek via Together AI                    |
+| `groq`        | OpenAICompatibleProvider| Llama 4, Mixtral via Groq                                   |
+| `deepseek`    | OpenAICompatibleProvider| DeepSeek-V3, DeepSeek-R1                                    |
+| `gemini`      | OpenAICompatibleProvider| Google Gemini 2.0 Flash, Pro (via OpenAI-compat endpoint)   |
+| `azure`       | OpenAICompatibleProvider| Azure OpenAI (also needs `AZURE_ENDPOINT`)                   |
+| `anthropic`   | AnthropicProvider       | Claude Sonnet 4, Haiku 3.5 (uses tool-calling mode)          |
+| `custom`      | OpenAICompatibleProvider| Self-hosted: vLLM, Ollama, TGI, LocalAI (set `LLM_BASE_URL`) |
+
+**Factory (`create_provider`):**
+- Reads `LLM_PROVIDER` env var to select adapter
+- For `openai`-compatible providers: normalises base URL, sets auth header, configures retry/backoff
+- For `anthropic`: configures Messages API with tool-use mode for structured output
+- For `custom`: requires `LLM_BASE_URL` to be set (points at self-hosted endpoint)
+- Returns `ProviderError` with descriptive message on unsupported provider names
+
+**LLM Agent (`LLMAgent`):**
+- Wraps any `LLMProvider` for the specific task of trade proposal generation
+- `generate_proposal(market_data, news, portfolio) -> tuple[LLMProposal, LLMResponse]`
+- Builds structured system prompt → calls provider → parses JSON → validates against `LLMProposal` schema
+- Handles: markdown code fence stripping, whitespace cleanup, Pydantic validation
+- Logs latency, tokens, provider, model for every call
+
+**Adding a new provider:**
+1. Subclass `LLMProvider` in a new file under `hub/app/services/llm/`
+2. Implement `chat_completion()` and properties
+3. Register in `factory.py`'s `_REGISTRY` dict
+4. Set `LLM_PROVIDER` in `.env` — no other code changes needed
+
+#### 3.1.2 Market Data Service
+
+- **File:** `hub/app/services/market_data.py`
+- **Class:** `MarketDataService`
+- **Purpose:** Fetch real-time price snapshots from free financial APIs
+- **Providers:** Twelve Data (default, 800 req/day free tier), Alpha Vantage
+- **Graceful degradation:** Returns error dict describing the issue, never raises
+- **Symbol normalization:** Handles EUR/USD vs EURUSD differences per provider
+- **Coverage:** Forex majors, metals (XAU/USD), crypto (BTC/USD)
+- **Configuration:** `MARKET_DATA_PROVIDER` and `MARKET_DATA_API_KEY` env vars
+- **Fallback:** When no API key is configured, `/proposal` and scans proceed with price context omitted
+
+#### 3.1.3 News Collector
+
+- **File:** `hub/app/services/news_collector.py`
+- **Class:** `NewsCollector`
+- **Purpose:** Fetch forex-relevant headlines from RSS feeds
+- **Sources:** ForexFactory RSS, Investing.com RSS
+- **Relevance filter:** Only headlines containing forex/crypto keywords
+- **Deduplication:** Same headline from multiple sources appears once
+- **Fallback:** Placeholder headlines when feeds are unreachable
+- **No extra dependencies:** Uses stdlib `xml.etree.ElementTree`
+- **Toggle:** `NEWS_ENABLED=False` to disable
+
+#### 3.1.4 Scheduled Scanning
+
+- **Purpose:** Auto-generate trade proposals on a cron schedule via APScheduler
+- **Mechanism:** `_run_scheduled_scan()` callback in `hub/app/main.py`
+- **Behavior:**
+  - Fetches prices via `MarketDataService` for all `SCAN_SYMBOLS`
+  - Runs LLM analysis for each symbol
+  - Skips HOLD actions (no Telegram spam)
+  - Saves valid proposals to DB (Telegram delivery in Phase 4+)
+- **Default:** Disabled (`SCAN_ENABLED=False`)
+- **Cron schedule:** Configurable via `SCAN_SCHEDULE` (default: `0 */4 * * *`)
+
+### 3.2 Telegram Bot (python-telegram-bot)
 - **Proposal messages** with inline keyboards (Approve / Reject / Edit)
 - **Command-based queries** (`/positions`, `/pnl`, `/status`, `/pause`, `/resume`)
 - **Monitoring pushes** (optional configurable interval)

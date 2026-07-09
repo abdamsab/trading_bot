@@ -267,66 +267,109 @@ async def health():
 
 ## 4. Phase 2 — Proposal Engine (LLM Integration)
 
-> **Goal:** Replace mock proposals with real LLM-generated proposals from market data.  
+> **Goal:** LLM Intel Hub with provider-agnostic abstraction — supports any LLM provider (cloud-hosted or self-hosted) interchangeably.  
 > **Duration:** ~2–3 hours  
 > **Depends on:** Phase 1  
-> **Test:** LLM generates a proposal when you hit a test endpoint, and it appears in Telegram.
+> **Test:** `pytest hub/tests/test_llm_providers.py -v` passes all provider abstraction tests (32 tests).
+
+### Design: Provider-Agnostic LLM Abstraction
+
+TradeBot uses a **provider-agnostic** LLM layer so you can switch between providers by changing env vars, never code.
+
+```
+hub/app/services/llm/
+├── __init__.py           # Exports create_provider, get_supported_providers
+├── base.py               # Abstract LLMProvider, LLMResponse, ProviderError
+├── openai_compat.py      # OpenAI, OpenRouter, vLLM, Ollama, TGI, etc.
+├── anthropic_provider.py # Anthropic Claude (tool-use mode)
+└── factory.py            # Provider factory — register, validate, create
+```
+
+**Supported providers** (add more by subclassing `LLMProvider` and registering in factory):
+
+| Provider     | LLM_PROVIDER       | Notes                                   |
+|--------------|--------------------|-----------------------------------------|
+| OpenAI       | `openai`           | GPT-4o, GPT-4o-mini, o1, o3            |
+| OpenRouter   | `openrouter`       | Any model on OpenRouter                 |
+| Anthropic    | `anthropic`        | Claude Sonnet 4, Haiku 3.5              |
+| Together     | `together`         | Llama, Mistral, deepseek via Together   |
+| Groq         | `groq`             | Llama 4, Mixtral via Groq               |
+| DeepSeek     | `deepseek`         | DeepSeek-V3, DeepSeek-R1                |
+| Gemini       | `gemini`           | Gemini 2.0 Flash, Pro (via Google AI)   |
+| Azure        | `azure`            | Azure OpenAI (needs AZURE_ENDPOINT)     |
+| Self-hosted  | `custom`           | vLLM, Ollama, TGI, LocalAI (set LLM_BASE_URL) |
+
+> **Self-hosted note:** vLLM, Ollama (via `/v1/chat/completions`), TGI, and LocalAI all expose OpenAI-compatible APIs → the `openai_compat` adapter handles them all. Just set `LLM_PROVIDER=custom` and `LLM_BASE_URL=http://your-host:8000/v1`.
 
 ### Tasks
 
-- [ ] **2.1** Create `hub/app/services/llm_agent.py`:
-  - `LLMAgent` class
-  - `generate_proposal(market_data, news, alerts) -> ProposalCreate` method
-  - Uses OpenAI structured output / JSON mode (or Anthropic tool use)
-  - System prompt demands: structured JSON with action, symbol, volume, confidence, reason, take_profit, stop_loss, timeframe
-  - Implements retry with backoff on API failures (use `tenacity` or manual)
-  - Strips any markdown/whitespace noise from LLM response before parsing
+- [x] **2.1** Create `hub/app/services/llm/` package with:
+  - `base.py` — `LLMProvider` abstract base, `LLMResponse` dataclass, `ProviderError` exception
+  - `openai_compat.py` — `OpenAICompatibleProvider` (works with OpenAI, OpenRouter, vLLM, Ollama, TGI, Together, Groq, DeepSeek, Azure)
+  - `anthropic_provider.py` — `AnthropicProvider` (tool-use mode for Claude)
+  - `factory.py` — `create_provider()` factory, `get_supported_providers()`
 
-- [ ] **2.2** Create the **system prompt** (stored as a constant, not inline):
+- [x] **2.2** Create `hub/app/services/llm_agent.py`:
+  - `LLMAgent` class — orchestrates proposal generation via any LLMProvider
+  - `generate_proposal(market_data, news, alerts) -> LLMProposal`
+  - System prompt: structured JSON with action, symbol, volume, confidence, reason, take_profit, stop_loss, timeframe
+  - Strips markdown code fences, validates response against `LLMProposal` Pydantic schema
+  - Logs: provider, model, latency_ms, input/output tokens, action, symbol, confidence
 
-  ```
-  You are a senior financial analyst assisting a retail trader.
-  Analyze the provided market data, news, and technical signals.
-  Output a trade recommendation as valid JSON with these keys:
-    - action: "BUY", "SELL", or "HOLD"
-    - symbol: string (e.g. "EURUSD")
-    - volume: float (recommended lot size, between 0.01 and 10.0)
-    - confidence: float between 0.0 and 1.0
-    - reason: string (2-4 sentences explaining your reasoning)
-    - take_profit: float or null
-    - stop_loss: float or null
-    - timeframe: string ("scalp", "intraday", "swing", "position")
-  Be specific. Reference actual price levels and indicators.
-  If uncertainty is high, set action to "HOLD" with low confidence.
-  ```
+- [x] **2.3** Update `hub/app/config.py`:
+  - `LLM_PROVIDER` (default: `openai`)
+  - `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL` (optional — for self-hosted or Azure)
+  - `LLM_MAX_RETRIES`, `LLM_TIMEOUT`, `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`
+  - `AZURE_ENDPOINT` (optional — for Azure OpenAI)
+  - `Settings.create_llm_provider()` factory method
 
-- [ ] **2.3** Create `hub/app/services/market_data.py` (new file):
-  - `fetch_market_snapshot(symbol: str) -> dict` — gets current price, spread, daily high/low from an API
-  - For Phase 2: use a free API (Alpha Vantage, Twelve Data, or mock it)
+- [x] **2.4** Wire LLM agent into Telegram bot:
+  - New `/proposal` command calls `LLMAgent.generate_proposal()` with simulated market data
+  - `/mock_proposal` preserved for testing
+  - FastAPI startup: initialize LLM provider + agent, inject into handlers
+  - `/status` shows connected LLM provider and model
 
-- [ ] **2.4** Create `hub/app/services/news_collector.py` (new file):
-  - `fetch_latest_news() -> list[str]` — pulls headlines from RSS feeds (e.g., ForexFactory, Reuters)
-  - Returns top 5 most recent headlines relevant to watched symbols
+- [x] **2.5** Write 32 tests in `hub/tests/test_llm_providers.py`:
+  - Factory creates each provider type correctly
+  - URL normalization for OpenAI-compatible providers
+  - Anthropic tool definition
+  - LLMProposal schema validation (valid, invalid action, bounds)
+  - build_user_prompt with various inputs
+  - LLMAgent response parsing, markdown fence stripping, error handling
+  - Provider response format determination
 
-- [ ] **2.5** Wire the LLM agent into the Telegram bot:
-  - Replace the `/mock_proposal` command with `/propose` that calls `LLMAgent.generate_proposal()` with real/fake data
-  - On FastAPI startup, start a scheduled scan (APScheduler) every N minutes that:
-    1. Collects market data + news
-    2. Calls LLM
-    3. If action != HOLD and confidence >= floor → creates proposal, sends to Telegram
-  - Respect the `paused` flag from `/pause`
+- [x] **2.6** Create `hub/app/services/market_data.py`:
+  - `MarketDataService` — fetches real-time prices from Twelve Data / Alpha Vantage
+  - Graceful degradation: returns error dict, never raises for LLM pipeline
+  - Symbol normalization per provider (EUR/USD vs EURUSD)
+  - Config: `MARKET_DATA_PROVIDER`, `MARKET_DATA_API_KEY`
 
-- [ ] **2.6** Add proposal generation stats logging:
-  - Log raw LLM response to `proposal_events` when proposal is created
-  - Track: input token count, output token count, latency
+- [x] **2.7** Create `hub/app/services/news_collector.py`:
+  - `NewsCollector` — fetches forex headlines from RSS feeds
+  - No extra deps (uses stdlib xml.etree)
+  - Relevance filter, deduplication, fallback headlines
+  - 30 tests in `hub/tests/test_news_collector.py`
 
-- [ ] **2.7** Write test `hub/tests/test_llm_agent.py`:
-  - Mock `openai.ChatCompletion.create` (or the provider's client)
-  - Test that valid JSON is parsed correctly
-  - Test that invalid JSON (markdown-wrapped, extra keys) is handled gracefully
-  - Test that network errors trigger retry
+- [x] **2.8** Wire market data + news into `/proposal` handler:
+  - `proposal_handler()` now fetches real price snapshots + headlines before calling LLM
+  - Falls back to Gateway account data (when Phase 4+ ready)
+  - Both services injected via `set_market_data_service()` / `set_news_collector()`
 
-**Milestone 2:** ✅ Real LLM generates structured proposals. They appear in Telegram. You can approve/reject real AI-generated suggestions.
+- [x] **2.9** Add scheduled scanning (APScheduler):
+  - `_start_scheduler()` / `_stop_scheduler()` in `hub/app/main.py`
+  - `_run_scheduled_scan()` callback — fetches prices, runs LLM for each symbol, saves to DB
+  - Config: `SCAN_ENABLED`, `SCAN_SCHEDULE`, `SCAN_SYMBOLS`
+  - Disabled by default (`SCAN_ENABLED=False`)
+
+- [x] **2.10** Update config + .env.example:
+  - `MARKET_DATA_PROVIDER`, `MARKET_DATA_API_KEY`
+  - `NEWS_ENABLED`, `NEWS_MAX_HEADLINES`
+  - `SCAN_ENABLED`, `SCAN_SCHEDULE`, `SCAN_SYMBOLS`
+  - `Settings.create_market_data_service()`, `Settings.create_news_collector()`
+
+- [x] **2.11** Write 30 tests for market data + news collector + config
+
+**Milestone 2:** ✅ Provider-agnostic LLM Intel Hub with real market data, news, and scheduled scanning. Switch between any provider by changing `.env`. 75 tests pass. `/proposal` generates AI proposals with live prices + headlines in Telegram.
 
 ---
 
