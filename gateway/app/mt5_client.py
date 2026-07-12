@@ -191,8 +191,17 @@ class MT5Client:
             return True
 
         path = self._settings.MT5_TERMINAL_PATH or None
+        login = self._settings.MT5_ACCOUNT
+        password = self._settings.MT5_PASSWORD or None
+        server = self._settings.MT5_SERVER or None
+
         try:
-            result = self._mt5.initialize(path=path) if path else self._mt5.initialize()
+            result = self._mt5.initialize(
+                path=path,
+                login=login,
+                password=password,
+                server=server,
+            )
         except Exception as exc:
             logger.error("MT5 initialisation failed", exc_info=exc)
             return False
