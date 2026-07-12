@@ -45,6 +45,3 @@ build/
 # OS
 .DS_Store
 Thumbs.db
-
-# Guide (generated)
-doc/guide.md
