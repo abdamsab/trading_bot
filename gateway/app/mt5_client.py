@@ -59,7 +59,10 @@ class _MockMT5:
 
     @staticmethod
     def symbol_info_tick(symbol: str) -> Any:
-        if symbol in ("EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "USDCAD", "AUDUSD", "NZDUSD"):
+        if symbol in (
+            "EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "USDCAD", "AUDUSD", "NZDUSD",
+            "EURUSDm", "GBPUSDm", "USDJPYm", "XAUUSDm", "USDCADm", "AUDUSDm", "NZDUSDm",
+        ):
             return _MockTick()
         return None
 
@@ -76,7 +79,10 @@ class _MockMT5:
                     }
                 },
             )()
-            if symbol in ("EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "USDCAD", "AUDUSD", "NZDUSD")
+            if symbol in (
+                "EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "USDCAD", "AUDUSD", "NZDUSD",
+                "EURUSDm", "GBPUSDm", "USDJPYm", "XAUUSDm", "USDCADm", "AUDUSDm", "NZDUSDm",
+            )
             else None
         )
 
@@ -378,7 +384,8 @@ class MT5Client:
         connected = self.is_connected()
         account = self.get_account_info() if connected else {}
         positions = self.get_positions() if connected else []
-        tick = self.get_symbol_tick("EURUSD") if connected else {}
+        tick_symbol = self._settings.allowed_symbols[0] if self._settings.allowed_symbols else "EURUSD"
+        tick = self.get_symbol_tick(tick_symbol) if connected else {}
 
         return {
             "connected": connected,
@@ -393,7 +400,7 @@ class MT5Client:
             },
             "positions_count": len(positions),
             "sample_tick": {
-                "symbol": "EURUSD",
+                "symbol": tick_symbol,
                 "bid": tick.get("bid"),
                 "ask": tick.get("ask"),
             },

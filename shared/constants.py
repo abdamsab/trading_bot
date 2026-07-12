@@ -5,13 +5,13 @@ from typing import Final
 # ── Symbols ────────────────────────────────────────────────────────────
 
 DEFAULT_ALLOWED_SYMBOLS: Final[list[str]] = [
-    "EURUSD",
-    "GBPUSD",
-    "USDJPY",
-    "XAUUSD",
-    "USDCAD",
-    "AUDUSD",
-    "NZDUSD",
+    "EURUSDm",
+    "GBPUSDm",
+    "USDJPYm",
+    "XAUUSDm",
+    "USDCADm",
+    "AUDUSDm",
+    "NZDUSDm",
 ]
 
 # ── Rate Limits ────────────────────────────────────────────────────────

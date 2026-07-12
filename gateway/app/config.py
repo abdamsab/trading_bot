@@ -33,7 +33,7 @@ class GatewaySettings(BaseSettings):
     RISK_MAX_DAILY_VOLUME: float = 50.0
     RISK_MAX_OPEN_POSITIONS: int = 10
     RISK_MAX_EXPOSURE_PCT: float = 30.0
-    RISK_ALLOWED_SYMBOLS: str = "EURUSD,GBPUSD,USDJPY,XAUUSD"
+    RISK_ALLOWED_SYMBOLS: str = "EURUSDm,GBPUSDm,USDJPYm,XAUUSDm"
     # Comma-separated list of symbols allowed for trading
 
     # ── Mock Mode (for development on Linux without MT5) ─────────────

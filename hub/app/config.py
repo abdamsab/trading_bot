@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     risk_max_daily_volume: float = 50.0
     risk_max_open_positions: int = 10
     risk_max_exposure_pct: float = 30.0
-    risk_allowed_symbols: str = "EURUSD,GBPUSD,USDJPY,XAUUSD"
+    risk_allowed_symbols: str = "EURUSDm,GBPUSDm,USDJPYm,XAUUSDm"
 
     # ── Logging ─────────────────────────────────────────────────────
     log_level: str = "INFO"

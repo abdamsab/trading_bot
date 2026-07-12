@@ -276,7 +276,7 @@ GATEWAY_HMAC_SECRET=dev-secret-change-in-production
 RISK_MAX_SINGLE_LOT=10.0
 RISK_MAX_OPEN_POSITIONS=20
 RISK_MAX_EXPOSURE_PCT=50.0
-RISK_ALLOWED_SYMBOLS=EURUSD,GBPUSD,USDJPY,XAUUSD
+RISK_ALLOWED_SYMBOLS=EURUSDm,GBPUSDm,USDJPYm,XAUUSDm
 MT5_MOCK=True
 EOF
 ```
@@ -485,7 +485,7 @@ MT5_MOCK=False
 RISK_MAX_SINGLE_LOT=10.0
 RISK_MAX_OPEN_POSITIONS=20
 RISK_MAX_EXPOSURE_PCT=50.0
-RISK_ALLOWED_SYMBOLS=EURUSD,GBPUSD,USDJPY,XAUUSD
+RISK_ALLOWED_SYMBOLS=EURUSDm,GBPUSDm,USDJPYm,XAUUSDm
 ```
 
 **Critical settings**:
@@ -725,15 +725,23 @@ MT5 initialisation returned False: [-10005] IPC timeout
 Symbol EURUSD not found on MT5
 ```
 
-The MT5 Python API can only query symbols that are **visible in Market Watch**. On a fresh Exness demo, symbols like EURUSD may not be enabled by default.
+The MT5 Python API can only query symbols that are **visible in Market Watch**. On a fresh Exness demo account, symbols like EURUSD may not be enabled by default.
 
-**Fix on MT5 Desktop:**
-- Right-click in **Market Watch** → **Show All**
-- Or right-click → **Symbols** → select EURUSD, GBPUSD, etc. → **Show**
+**Common causes:**
 
-**Or right-click a visible symbol → Hide All, then Show All** to refresh.
+1. **Exness uses `m`-suffixed symbol names** — Exness standard/mini demo accounts name symbols `EURUSDm`, `XAUUSDm`, `USDJPYm`, `GBPUSDm`, etc. If the `RISK_ALLOWED_SYMBOLS` config (or the code default) lists `EURUSD` without the `m`, the Gateway will ask for a symbol name that doesn't exist.
 
-Once symbols appear in Market Watch, restart the Gateway. The code also has a programmatic fix (calls `symbol_select()` automatically), so after a fresh reinstall this should resolve.
+   → **Check what symbols are actually visible** in MT5 Desktop Market Watch. If they all have an `m` suffix, update `RISK_ALLOWED_SYMBOLS` in your `.env` to use the `m` names (e.g. `EURUSDm,GBPUSDm,USDJPYm,XAUUSDm`).
+
+2. **Symbols not added to Market Watch** — even with the correct name, `symbol_select()` may fail if the terminal isn't fully ready.
+
+   **Fix on MT5 Desktop:**
+   - Right-click in **Market Watch** → **Show All**
+   - Or right-click → **Symbols** → select EURUSDm, GBPUSDm, etc. → **Show**
+
+   **Or right-click a visible symbol → Hide All, then Show All** to refresh.
+
+Once symbols appear in Market Watch, restart the Gateway. The code also has a programmatic fix (calls `symbol_select()` automatically at startup), but the symbol name must match first.
 
 ### "Invalid signature" from Gateway
 
@@ -848,7 +856,7 @@ MT5_MOCK=False
 RISK_MAX_SINGLE_LOT=10.0
 RISK_MAX_OPEN_POSITIONS=20
 RISK_MAX_EXPOSURE_PCT=50.0
-RISK_ALLOWED_SYMBOLS=EURUSD,GBPUSD,USDJPY,XAUUSD
+RISK_ALLOWED_SYMBOLS=EURUSDm,GBPUSDm,USDJPYm,XAUUSDm
 ```
 
 ---
