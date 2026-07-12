@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
+import structlog
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -30,8 +30,9 @@ from hub.app.bot.messages import (
 )
 from hub.app.config import settings
 from shared.constants import LOT_STEP, MAX_LOT, MIN_LOT
+from shared.schemas import ProposalStatus
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # ── FSM state storage ──────────────────────────────────────────────────
 # In-memory dict tracking users in EDITING_LOTS state.
@@ -137,6 +138,7 @@ async def _transition_proposal(
     from sqlalchemy import select
 
     from hub.app.models.proposal import Proposal, ProposalEvent
+    from shared.schemas import ProposalStatus
 
     async with _db_session_factory() as session:
         result = await session.execute(select(Proposal).where(Proposal.id == proposal_id))
@@ -144,8 +146,10 @@ async def _transition_proposal(
         if not proposal:
             return None
 
-        from_status = proposal.status.value
-        proposal.status = to_status  # type: ignore[assignment]
+        from_status = (
+            proposal.status.value if hasattr(proposal.status, "value") else proposal.status
+        )
+        proposal.status = ProposalStatus(to_status)
         if to_status in ("approved", "rejected", "expired", "failed"):
             proposal.responded_at = datetime.now(timezone.utc)
 
@@ -158,7 +162,7 @@ async def _transition_proposal(
                 extra_data=extra_data or {},
             )
         )
-    await session.commit()
+        await session.commit()
     return proposal
 
 
@@ -256,6 +260,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "`/status` — System health\n"
         "`/pause` / `/resume` — Stop/start proposals\n"
         "`/proposals` — Recent proposal history\n"
+        "`/pending` — Review pending proposals\n"
         "`/help` — Full command list\n\n"
         "_No real trades will be executed without your explicit approval._",
     )
@@ -274,6 +279,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "`/pause` — Pause proposal generation\n"
         "`/resume` — Resume proposal generation\n"
         "`/proposals` — Show last 10 proposals\n"
+        "`/pending` — Review pending proposals\n"
         "`/config` — Show current settings\n"
         "`/help` — This message",
     )
@@ -368,6 +374,44 @@ async def proposals_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await update.message.reply_text("\n".join(lines))
 
 
+async def pending_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /pending — show pending proposals with approve/reject buttons."""
+    if not _is_authorized(update):
+        return
+    from sqlalchemy import select
+
+    from hub.app.models.proposal import Proposal
+
+    async with _db_session_factory() as session:
+        result = await session.execute(
+            select(Proposal)
+            .where(Proposal.status == ProposalStatus.PENDING)
+            .order_by(Proposal.created_at.asc())
+        )
+        proposals = result.scalars().all()
+
+    if not proposals:
+        await update.message.reply_text("✅ No pending proposals.")
+        return
+
+    await update.message.reply_text(
+        f"📋 *Pending Proposals* ({len(proposals)})\n\n"
+        "Use the buttons below to approve, edit, or reject each proposal."
+    )
+
+    for proposal in proposals:
+        try:
+            await update.message.reply_text(
+                render_proposal(proposal),
+                reply_markup=proposal_keyboard(proposal.id),
+            )
+        except Exception:
+            logger.error(
+                "pending_send_failed",
+                proposal_id=proposal.id,
+            )
+
+
 async def config_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /config — show current settings."""
     if not _is_authorized(update):
@@ -429,10 +473,17 @@ async def mock_proposal_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 symbol=data["symbol"],
                 confidence=data["confidence"],
             )
-            await update.message.reply_text(
-                f"⏸ *Proposal Blocked by Rate Limiter*\n\n{decision.reason}\n\n"
-                f"_Check `/config` for current limits._",
-            )
+            try:
+                await update.message.reply_text(
+                    f"⏸ *Proposal Blocked by Rate Limiter*\n\n{decision.reason}\n\n"
+                    f"_Check `/config` for current limits._",
+                )
+            except Exception:
+                logger.error(
+                    "telegram_timeout_reply_rate_limited",
+                    check=decision.check_name,
+                    symbol=data["symbol"],
+                )
             return
     else:
         data = _generate_mock_proposal()
@@ -442,6 +493,7 @@ async def mock_proposal_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     proposal = Proposal(
         id=str(uuid.uuid4()),
+        status=ProposalStatus.PENDING,
         action=data["action"],
         symbol=data["symbol"],
         volume=Decimal(str(data["volume"])),
@@ -622,6 +674,7 @@ async def proposal_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         proposal = Proposal(
             id=str(uuid.uuid4()),
+            status=ProposalStatus.PENDING,
             action=proposal_data.action,
             symbol=proposal_data.symbol,
             volume=Decimal(str(proposal_data.volume)),
@@ -1121,6 +1174,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("status", status_handler))
     application.add_handler(CommandHandler("pause", pause_handler))
     application.add_handler(CommandHandler("resume", resume_handler))
+    application.add_handler(CommandHandler("pending", pending_handler))
     application.add_handler(CommandHandler("proposals", proposals_handler))
     application.add_handler(CommandHandler("config", config_handler))
     application.add_handler(CommandHandler("mock_proposal", mock_proposal_handler))
@@ -1136,4 +1190,4 @@ def register_handlers(application: Application) -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fsm_text_handler))
 
     # Error handler
-    application.add_handler(MessageHandler(filters.ALL, error_handler), group=-1)
+    application.add_error_handler(error_handler)

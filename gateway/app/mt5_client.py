@@ -59,7 +59,9 @@ class _MockMT5:
 
     @staticmethod
     def symbol_info_tick(symbol: str) -> Any:
-        return _MockTick()
+        if symbol in ("EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "USDCAD", "AUDUSD", "NZDUSD"):
+            return _MockTick()
+        return None
 
     @staticmethod
     def symbol_info(symbol: str) -> Any:
@@ -110,6 +112,14 @@ class _MockTick:
     ask: float = 1.09480
     spread: int = 3
     time: int = 0
+
+    def _asdict(self) -> dict[str, Any]:
+        return {
+            "bid": self.bid,
+            "ask": self.ask,
+            "spread": self.spread,
+            "time": self.time,
+        }
 
 
 class _MockOrderResult:

@@ -18,13 +18,14 @@ All providers except 'anthropic' use the OpenAI-compatible adapter.
 
 from __future__ import annotations
 
-import logging
 from typing import NoReturn
+
+import structlog
 
 from hub.app.services.llm.base import LLMProvider
 from hub.app.services.llm.openai_compat import OpenAICompatibleProvider
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # ── Known provider aliases and their base URLs ──────────────────────────

@@ -89,6 +89,24 @@ class Settings(BaseSettings):
     # Symbols to scan (comma-sep). Empty = use risk_allowed_symbols
     scan_symbols: str = ""
 
+    # ── Auto Proposal (replaces scheduled scanning) ──────────────────
+    # Enables automatic LLM-powered trade proposals on a fixed interval.
+    # When enabled, runs a background asyncio loop that:
+    #   1. Checks rate limiter (hourly cap, daily cap)
+    #   2. Fetches live market data
+    #   3. Skips if volatility is below threshold (saves LLM tokens)
+    #   4. Calls LLM only on active markets
+    #   5. Sends BUY/SELL proposals to Telegram for approval
+    auto_proposal_enabled: bool = False
+    # Minutes between each auto-proposal cycle
+    auto_proposal_interval_minutes: int = 45
+    # Minimum spread ratio (spread/price) to trigger an LLM call.
+    # 0.0003 ≈ 3/10 pip for EURUSD — below this the market is too flat
+    # to warrant analysis. Raise this to save more tokens.
+    auto_proposal_volatility_threshold: float = 0.0003
+    # Symbols to auto-scan (comma-sep). Empty = use risk_allowed_symbols
+    auto_proposal_symbols: str = ""
+
     @property
     def allowed_symbols_list(self) -> list[str]:
         return [s.strip() for s in self.risk_allowed_symbols.split(",") if s.strip()]
@@ -97,6 +115,12 @@ class Settings(BaseSettings):
     def scan_symbols_list(self) -> list[str]:
         if self.scan_symbols.strip():
             return [s.strip() for s in self.scan_symbols.split(",") if s.strip()]
+        return self.allowed_symbols_list
+
+    @property
+    def auto_proposal_symbols_list(self) -> list[str]:
+        if self.auto_proposal_symbols.strip():
+            return [s.strip() for s in self.auto_proposal_symbols.split(",") if s.strip()]
         return self.allowed_symbols_list
 
     def create_llm_provider(self) -> LLMProvider:
@@ -115,12 +139,17 @@ class Settings(BaseSettings):
         )
 
     def create_market_data_service(self) -> "MarketDataService":
-        """Create a configured MarketDataService (or None if not configured)."""
-        from hub.app.services.market_data import MarketDataService
+        """Create a configured MarketDataService with fallback chain.
 
+        ``market_data_provider`` can be a comma-separated list of providers
+        tried in priority order (e.g. "twelve_data,gateway").
+        """
+        raw = self.market_data_provider or "twelve_data"
+        providers = [p.strip() for p in raw.split(",") if p.strip()]
         return MarketDataService(
-            provider=self.market_data_provider or "twelve_data",
+            providers=providers,
             api_key=self.market_data_api_key,
+            gateway_base_url=self.gateway_base_url,
         )
 
     def create_news_collector(self) -> "NewsCollector":

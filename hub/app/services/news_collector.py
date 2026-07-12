@@ -14,13 +14,13 @@ Usage:
 
 from __future__ import annotations
 
-import logging
 import xml.etree.ElementTree as ET
 from typing import Any
 
 import httpx
+import structlog
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # ── Known RSS feed sources ─────────────────────────────────────────────

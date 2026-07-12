@@ -7,11 +7,12 @@ with actor='rate_limiter' for auditability.
 
 from __future__ import annotations
 
-import logging
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+import structlog
 
 from hub.app.config import settings
 from shared.constants import (
@@ -20,7 +21,7 @@ from shared.constants import (
     HIGH_IMPACT_EVENTS,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # ── Rate Limit Decision ─────────────────────────────────────────────────

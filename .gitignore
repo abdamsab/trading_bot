@@ -1,43 +1,50 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-dist/
-build/
-*.egg
-.venv/
-venv/
-env/
+# TradeBot .gitignore
 
 # Environment
 .env
 .env.local
 .env.production
 
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-.DS_Store
+# Keep .env.example tracked (it's the template reference)
+!.env.example
+
+# Log files
+*.log
+*.log.*
+log.log
+gateway.log
+executions.log
+
+# Coverage
+.coverage
+htmlcov/
+.coverage.*
 
 # Database
 *.db
-*.sqlite3
+*.db-wal
+*.db-shm
 
-# Logs
-*.log
-logs/
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+*.egg
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Testing
-.coverage
-htmlcov/
-.pytest_cache/
-
-# Docker
-.docker/
+# Guide (generated)
+guide.md

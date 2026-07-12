@@ -388,6 +388,28 @@ class TestPositionsEndpoint:
         assert resp.json() == []
 
 
+class TestQuoteEndpoint:
+    def test_quote_known_symbol(self, test_client: TestClient) -> None:
+        resp = test_client.get("/quote/EURUSD")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["symbol"] == "EURUSD"
+        assert data["bid"] is not None
+        assert data["ask"] is not None
+        assert data["source"] == "mt5_gateway"
+
+    def test_quote_unknown_symbol(self, test_client: TestClient) -> None:
+        resp = test_client.get("/quote/UNKNOWN")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "error" in data
+
+    def test_quote_has_no_error(self, test_client: TestClient) -> None:
+        resp = test_client.get("/quote/EURUSD")
+        data = resp.json()
+        assert "error" not in data
+
+
 class TestTradeEndpoint:
     def test_execute_valid_trade(self, test_client: TestClient) -> None:
         payload = {

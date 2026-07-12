@@ -1,13 +1,22 @@
-"""Market data service — fetches real-time prices from free financial APIs.
+"""Market data service — fetches real-time prices from multiple sources.
+
+Supports a **priority-ordered fallback chain** so you can have a primary
+source and one or more fallbacks for redundancy::
+
+    providers=["twelve_data", "gateway"]
 
 Supported providers:
   - twelve_data: Twelve Data (free tier: 800 req/day) — good forex coverage
   - alpha_vantage: Alpha Vantage (free tier: 25 req/day) — slower, broad coverage
+  - gateway: Calls the MT5 Execution Gateway's /quote/{symbol} endpoint
 
 Usage:
-    service = MarketDataService(provider="twelve_data", api_key="...")
+    service = MarketDataService(
+        providers=["twelve_data", "gateway"],
+        api_key="...",
+        gateway_base_url="http://localhost:9000",
+    )
     snapshot = await service.fetch_snapshot("EURUSD")
-    snapshots = await service.fetch_multiple(["EURUSD", "GBPUSD", "USDJPY"])
 """
 
 from __future__ import annotations
@@ -26,11 +35,10 @@ class MarketDataError(Exception):
 
 
 class MarketDataService:
-    """Fetches current market snapshots for forex symbols.
+    """Fetches current market snapshots with fallback across providers.
 
-    Uses a pluggable API provider (default: Twelve Data).
-    Falls back gracefully on errors — returns a dict with error info
-    rather than raising, so the LLM pipeline can continue with partial data.
+    Providers are tried in priority order.  The first one that returns a
+    non-error snapshot wins.
     """
 
     # Well-known forex symbols
@@ -55,25 +63,36 @@ class MarketDataService:
 
     def __init__(
         self,
-        provider: str = "twelve_data",
+        providers: list[str] | None = None,
         api_key: str = "",
         *,
         http_timeout: float = 10.0,
+        gateway_base_url: str = "http://localhost:9000",
     ) -> None:
-        self._provider = provider.lower()
+        self._providers = providers or ["twelve_data"]
         self._api_key = api_key
         self._http_timeout = http_timeout
+        self._gateway_base_url = gateway_base_url.rstrip("/")
 
     @property
     def provider_name(self) -> str:
-        return self._provider
+        return "+".join(self._providers)
 
     @property
     def is_configured(self) -> bool:
-        return bool(self._api_key)
+        """True if at least one provider can work given current config."""
+        for provider in self._providers:
+            if provider in ("twelve_data", "alpha_vantage"):
+                if self._api_key:
+                    return True
+            elif provider == "gateway":
+                return True  # gateway_base_url always has a default
+            else:
+                return True  # unknown — try anyway
+        return False
 
     async def fetch_snapshot(self, symbol: str) -> dict[str, Any]:
-        """Fetch a single market snapshot for one symbol.
+        """Fetch a single market snapshot, trying providers in priority order.
 
         Returns a dict with keys:
           - symbol, price, bid, ask, spread, change_pct, high_day, low_day,
@@ -82,17 +101,31 @@ class MarketDataService:
         On error, returns a dict with error key set (never raises).
         """
         symbol = symbol.upper()
+        last_error: str | None = None
 
-        try:
-            if self._provider == "twelve_data":
-                return await self._fetch_twelve_data(symbol)
-            elif self._provider == "alpha_vantage":
-                return await self._fetch_alpha_vantage(symbol)
-            else:
-                return self._empty_snapshot(symbol, error=f"Unknown provider: {self._provider}")
-        except Exception as e:
-            logger.warning("market_data_fetch_failed", symbol=symbol, error=str(e))
-            return self._empty_snapshot(symbol, error=str(e))
+        for provider in self._providers:
+            try:
+                result = await self._fetch_with_provider(provider, symbol)
+                if "error" not in result:
+                    return result
+                last_error = result["error"]
+                logger.debug(
+                    "market_data_provider_failed",
+                    provider=provider,
+                    symbol=symbol,
+                    error=last_error,
+                )
+            except Exception as e:
+                last_error = str(e)
+                logger.debug(
+                    "market_data_provider_error",
+                    provider=provider,
+                    symbol=symbol,
+                    error=last_error,
+                )
+
+        # All providers failed
+        return self._empty_snapshot(symbol, error=last_error or "All market data providers failed")
 
     async def fetch_multiple(self, symbols: list[str]) -> dict[str, dict[str, Any]]:
         """Fetch snapshots for multiple symbols.
@@ -105,27 +138,38 @@ class MarketDataService:
             results[sym.upper()] = await self.fetch_snapshot(sym)
         return results
 
+    # ── Provider router ────────────────────────────────────────────────
+
+    async def _fetch_with_provider(self, provider: str, symbol: str) -> dict[str, Any]:
+        if provider == "twelve_data":
+            return await self._fetch_twelve_data(symbol)
+        elif provider == "alpha_vantage":
+            return await self._fetch_alpha_vantage(symbol)
+        elif provider == "gateway":
+            return await self._fetch_gateway(symbol)
+        else:
+            return self._empty_snapshot(symbol, error=f"Unknown provider: {provider}")
+
     # ── Provider: Twelve Data ──────────────────────────────────────────
 
     async def _fetch_twelve_data(self, symbol: str) -> dict[str, Any]:
         """Fetch from Twelve Data REST API.
 
         Docs: https://twelvedata.com/docs#real-time-price
-        Endpoint: GET https://api.twelvedata.com/price?symbol=EUR/USD&apikey=...
         """
+        if not self._api_key:
+            return self._empty_snapshot(symbol, error="Twelve Data API key not configured")
+
         # Twelve Data uses slash in symbol: EUR/USD, XAU/USD
         td_symbol = symbol
         if symbol in self.FOREX_SYMBOLS | self.COMMON_METALS:
-            if len(symbol) == 6 and symbol[:3] != "XAU" and symbol[:3] != "XAG":
+            if len(symbol) == 6 and symbol[:3] not in ("XAU", "XAG"):
                 td_symbol = f"{symbol[:3]}/{symbol[3:]}"
             elif symbol in self.COMMON_METALS:
                 td_symbol = f"{symbol[:3]}/{symbol[3:]}"
 
         url = "https://api.twelvedata.com/quote"
-        params = {
-            "symbol": td_symbol,
-            "apikey": self._api_key,
-        }
+        params = {"symbol": td_symbol, "apikey": self._api_key}
 
         async with httpx.AsyncClient(timeout=self._http_timeout) as client:
             resp = await client.get(url, params=params)
@@ -136,9 +180,9 @@ class MarketDataService:
         data = resp.json()
 
         if data.get("status") == "error":
-            return self._empty_snapshot(
-                symbol, error=data.get("message", "Unknown Twelve Data error")
-            )
+            # e.g. rate-limit hit — message says "API rate limit exceeded"
+            msg = data.get("message", "Unknown Twelve Data error")
+            return self._empty_snapshot(symbol, error=msg)
 
         return {
             "symbol": symbol,
@@ -153,16 +197,16 @@ class MarketDataService:
             "previous_close": _safe_float(data.get("previous_close")),
             "timestamp": data.get("datetime", datetime.now(timezone.utc).isoformat()),
             "source": "twelve_data",
-            "provider": self._provider,
+            "provider": "twelve_data",
         }
 
     # ── Provider: Alpha Vantage ────────────────────────────────────────
 
     async def _fetch_alpha_vantage(self, symbol: str) -> dict[str, Any]:
-        """Fetch from Alpha Vantage REST API.
+        """Fetch from Alpha Vantage REST API."""
+        if not self._api_key:
+            return self._empty_snapshot(symbol, error="Alpha Vantage API key not configured")
 
-        Endpoint: GET https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=EURUSD&apikey=...
-        """
         av_symbol = symbol.replace("/", "")
         url = "https://www.alphavantage.co/query"
         params = {
@@ -200,7 +244,50 @@ class MarketDataService:
             "previous_close": None,
             "timestamp": rate_data.get("6. Last Refreshed", datetime.now(timezone.utc).isoformat()),
             "source": "alpha_vantage",
-            "provider": self._provider,
+            "provider": "alpha_vantage",
+        }
+
+    # ── Provider: Gateway (MT5 via Gateway) ────────────────────────────
+
+    async def _fetch_gateway(self, symbol: str) -> dict[str, Any]:
+        """Fetch bid/ask from the MT5 Execution Gateway /quote/{symbol} endpoint."""
+        url = f"{self._gateway_base_url}/quote/{symbol}"
+
+        async with httpx.AsyncClient(timeout=self._http_timeout) as client:
+            try:
+                resp = await client.get(url)
+            except httpx.ConnectError:
+                return self._empty_snapshot(symbol, error="Gateway unreachable")
+            except httpx.TimeoutException:
+                return self._empty_snapshot(symbol, error="Gateway timeout")
+
+        if resp.status_code != 200:
+            return self._empty_snapshot(symbol, error=f"Gateway HTTP {resp.status_code}")
+
+        data = resp.json()
+
+        if "error" in data:
+            return self._empty_snapshot(symbol, error=data["error"])
+
+        # Use midpoint of bid/ask as price if both available
+        bid = _safe_float(data.get("bid"))
+        ask = _safe_float(data.get("ask"))
+        price = ask if ask is not None else bid
+
+        return {
+            "symbol": symbol,
+            "price": price,
+            "bid": bid,
+            "ask": ask,
+            "spread": _safe_float(data.get("spread")),
+            "change_pct": None,
+            "high_day": None,
+            "low_day": None,
+            "volume": None,
+            "previous_close": None,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "source": "mt5_gateway",
+            "provider": "gateway",
         }
 
     # ── Helpers ────────────────────────────────────────────────────────

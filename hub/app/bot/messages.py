@@ -134,9 +134,12 @@ def render_gateway_timeout(proposal: Proposal) -> str:
 
 
 def _fmt_remaining(expires_at) -> str:
-    remaining = expires_at - __import__("datetime").datetime.now(
-        __import__("datetime").timezone.utc
-    )
+    from datetime import datetime, timezone
+
+    # SQLite may strip tzinfo — ensure both sides are offset-aware
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    remaining = expires_at - datetime.now(timezone.utc)
     secs = int(remaining.total_seconds())
     if secs <= 0:
         return "Expired"

@@ -277,6 +277,33 @@ class TestLLMProposalSchema:
         p = LLMProposal.model_validate(data)
         assert p.action == "HOLD"
 
+    def test_hold_with_zero_volume(self):
+        """HOLD with volume=0.0 should pass now (eg Gemini returns this)."""
+        data = {
+            "action": "HOLD",
+            "symbol": "EURUSD",
+            "volume": 0.0,
+            "confidence": 0.25,
+            "reason": "Low volatility heading into weekend. Avoiding gap risk.",
+            "timeframe": "intraday",
+        }
+        p = LLMProposal.model_validate(data)
+        assert p.volume == 0.0
+
+    def test_buy_with_zero_volume_rejected(self):
+        """BUY/SELL with volume=0.0 must still be rejected."""
+        with pytest.raises(ValueError):
+            LLMProposal.model_validate(
+                {
+                    "action": "BUY",
+                    "symbol": "EURUSD",
+                    "volume": 0.0,
+                    "confidence": 0.75,
+                    "reason": "This should fail because volume is 0.",
+                    "timeframe": "intraday",
+                }
+            )
+
     def test_invalid_action_raises(self):
         with pytest.raises(ValueError):
             LLMProposal.model_validate(

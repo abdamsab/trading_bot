@@ -30,7 +30,7 @@ class LLMProposal(BaseModel):
 
     action: str = Field(..., pattern=r"^(BUY|SELL|HOLD)$")
     symbol: str = Field(..., min_length=1, max_length=20)
-    volume: float = Field(..., ge=0.01, le=100.0)
+    volume: float = Field(default=0.01, ge=0.0, le=100.0)
     confidence: float = Field(..., ge=0.0, le=1.0)
     reason: str = Field(..., min_length=10, max_length=2000)
     take_profit: float | None = None
@@ -39,7 +39,13 @@ class LLMProposal(BaseModel):
 
     @field_validator("volume")
     @classmethod
-    def round_volume(cls, v: float) -> float:
+    def validate_volume_for_action(cls, v: float, info) -> float:
+        """Allow 0.0 for HOLD actions; otherwise enforce ≥0.01."""
+        action = info.data.get("action")
+        if action == "HOLD":
+            return v  # any volume is fine for HOLD
+        if v < 0.01:
+            raise ValueError(f"volume must be ≥0.01 for {action}, got {v}")
         return round(v, 2)
 
 

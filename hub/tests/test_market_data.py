@@ -50,7 +50,7 @@ class TestMarketDataServiceInit:
         assert s.is_configured is True
 
     def test_alpha_vantage_provider(self):
-        s = MarketDataService(provider="alpha_vantage", api_key="test")
+        s = MarketDataService(providers=["alpha_vantage"], api_key="test-key")
         assert s.provider_name == "alpha_vantage"
 
 
@@ -137,7 +137,7 @@ class TestFetchSnapshot:
     @pytest.mark.asyncio
     async def test_alpha_vantage_success(self):
         """Verify Alpha Vantage quote response is parsed correctly."""
-        s = MarketDataService(provider="alpha_vantage", api_key="test-key")
+        s = MarketDataService(providers=["alpha_vantage"], api_key="test-key")
 
         with patch.object(
             s,
@@ -170,7 +170,7 @@ class TestFetchSnapshot:
     @pytest.mark.asyncio
     async def test_alpha_vantage_no_rate_data(self):
         """Test Alpha Vantage response missing rate data."""
-        s = MarketDataService(provider="alpha_vantage", api_key="test-key")
+        s = MarketDataService(providers=["alpha_vantage"], api_key="test-key")
 
         with patch.object(
             s,
@@ -188,6 +188,102 @@ class TestFetchSnapshot:
 
         assert "error" in result
         assert "No rate data" in result["error"]
+
+
+class TestFallbackChain:
+    @pytest.mark.asyncio
+    async def test_primary_falls_back_on_error(self):
+        """When the first provider returns an error, the second is tried."""
+        s = MarketDataService(
+            providers=["twelve_data", "gateway"],
+            api_key="test-key",
+            http_timeout=1.0,
+        )
+
+        with (
+            patch.object(
+                s,
+                "_fetch_twelve_data",
+                AsyncMock(return_value={"symbol": "EURUSD", "error": "rate limit exceeded"}),
+            ),
+            patch.object(
+                s,
+                "_fetch_gateway",
+                AsyncMock(
+                    return_value={
+                        "symbol": "EURUSD",
+                        "price": 1.0945,
+                        "bid": 1.0944,
+                        "ask": 1.0946,
+                        "source": "mt5_gateway",
+                        "provider": "gateway",
+                    }
+                ),
+            ),
+        ):
+            result = await s.fetch_snapshot("EURUSD")
+
+        assert result["source"] == "mt5_gateway"
+        assert result["provider"] == "gateway"
+        assert "error" not in result
+
+    @pytest.mark.asyncio
+    async def test_all_providers_fail(self):
+        """When all providers fail, an error dict is returned."""
+        s = MarketDataService(
+            providers=["twelve_data", "gateway"],
+            api_key="test-key",
+            http_timeout=1.0,
+        )
+
+        with (
+            patch.object(
+                s,
+                "_fetch_twelve_data",
+                AsyncMock(return_value={"symbol": "EURUSD", "error": "rate limit exceeded"}),
+            ),
+            patch.object(
+                s,
+                "_fetch_gateway",
+                AsyncMock(return_value={"symbol": "EURUSD", "error": "Gateway unreachable"}),
+            ),
+        ):
+            result = await s.fetch_snapshot("EURUSD")
+
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_alpha_vantage_then_twelve_data_fallback(self):
+        """Fallback chain works with any provider combination."""
+        s = MarketDataService(
+            providers=["alpha_vantage", "twelve_data"],
+            api_key="test-key",
+            http_timeout=1.0,
+        )
+
+        with (
+            patch.object(
+                s,
+                "_fetch_alpha_vantage",
+                AsyncMock(return_value={"symbol": "EURUSD", "error": "rate limit exceeded"}),
+            ),
+            patch.object(
+                s,
+                "_fetch_twelve_data",
+                AsyncMock(
+                    return_value={
+                        "symbol": "EURUSD",
+                        "price": 1.0945,
+                        "source": "twelve_data",
+                        "provider": "twelve_data",
+                    }
+                ),
+            ),
+        ):
+            result = await s.fetch_snapshot("EURUSD")
+
+        assert result["source"] == "twelve_data"
+        assert "error" not in result
 
 
 class TestFetchMultiple:

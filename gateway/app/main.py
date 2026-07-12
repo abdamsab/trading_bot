@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
+from logging.handlers import TimedRotatingFileHandler
 from typing import Any
 
 import uvicorn
@@ -25,6 +26,11 @@ from shared.utils.crypto import verify_payload
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        TimedRotatingFileHandler("gateway.log", when="midnight", backupCount=7, encoding="utf-8"),
+    ],
+    force=True,
 )
 logger = logging.getLogger("gateway")
 
@@ -203,6 +209,29 @@ async def get_positions(
             }
         )
     return result
+
+
+@app.get("/quote/{symbol}")
+async def get_quote(
+    symbol: str,
+    _: None = Depends(_verify_hmac),
+    mt5: MT5Client = Depends(_get_mt5),
+) -> dict[str, Any]:
+    """Return current bid/ask for a symbol from MT5."""
+    tick = mt5.get_symbol_tick(symbol)
+    if not tick:
+        info = mt5.get_symbol_info(symbol)
+        if info is None:
+            return {"symbol": symbol.upper(), "error": "Symbol not found on MT5"}
+        return {"symbol": symbol.upper(), "error": "No tick data available"}
+    return {
+        "symbol": symbol.upper(),
+        "bid": tick.get("bid"),
+        "ask": tick.get("ask"),
+        "spread": tick.get("spread"),
+        "time": tick.get("time"),
+        "source": "mt5_gateway",
+    }
 
 
 @app.post("/trade")

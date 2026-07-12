@@ -7,14 +7,15 @@ a round-trip to the Gateway just to be rejected.
 
 from __future__ import annotations
 
-import logging
 from decimal import Decimal
 from typing import Any
+
+import structlog
 
 from hub.app.config import settings
 from shared.schemas import ApprovalRequest
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class HubRiskError(Exception):
