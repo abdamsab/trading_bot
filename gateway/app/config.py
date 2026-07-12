@@ -9,7 +9,7 @@ class GatewaySettings(BaseSettings):
     """Settings for the MT5 Execution Gateway service."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file="gateway/.env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
