@@ -59,15 +59,21 @@ class _MockMT5:
 
     @staticmethod
     def symbol_info_tick(symbol: str) -> Any:
-        if symbol in (
+        # Case-insensitive check for known mock symbols
+        if symbol.upper() in {
             "EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "USDCAD", "AUDUSD", "NZDUSD",
             "EURUSDm", "GBPUSDm", "USDJPYm", "XAUUSDm", "USDCADm", "AUDUSDm", "NZDUSDm",
-        ):
+        }:
             return _MockTick()
         return None
 
     @staticmethod
     def symbol_info(symbol: str) -> Any:
+        # Case-insensitive check for known mock symbols
+        known = {
+            "EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "USDCAD", "AUDUSD", "NZDUSD",
+            "EURUSDm", "GBPUSDm", "USDJPYm", "XAUUSDm", "USDCADm", "AUDUSDm", "NZDUSDm",
+        }
         return (
             type(
                 "_MockSymbolInfo",
@@ -79,10 +85,7 @@ class _MockMT5:
                     }
                 },
             )()
-            if symbol in (
-                "EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "USDCAD", "AUDUSD", "NZDUSD",
-                "EURUSDm", "GBPUSDm", "USDJPYm", "XAUUSDm", "USDCADm", "AUDUSDm", "NZDUSDm",
-            )
+            if symbol.upper() in known
             else None
         )
 

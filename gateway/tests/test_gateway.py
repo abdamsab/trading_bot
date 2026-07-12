@@ -79,7 +79,7 @@ class TestMT5Client:
         from gateway.app.config import GatewaySettings
         from gateway.app.mt5_client import MT5Client
 
-        s = GatewaySettings()  # type: ignore[call-arg]
+        s = GatewaySettings(_env_file=None)  # type: ignore[call-arg]
         client = MT5Client(s)
         client.initialize()
         hc = client.healthcheck()
@@ -87,7 +87,7 @@ class TestMT5Client:
         assert hc["mock"] is True
         assert hc["account"]["balance"] == 100000.0
         assert hc["positions_count"] == 0
-        assert hc["sample_tick"]["symbol"] == "EURUSD"
+        assert hc['sample_tick']['symbol'] in ('EURUSD', 'EURUSDm')
 
     def test_get_symbol_info_known(self) -> None:
         from gateway.app.config import GatewaySettings

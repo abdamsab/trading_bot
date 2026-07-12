@@ -46,7 +46,7 @@ class GatewaySettings(BaseSettings):
 
     @property
     def allowed_symbols(self) -> list[str]:
-        return [s.strip().upper() for s in self.RISK_ALLOWED_SYMBOLS.split(",") if s.strip()]
+        return [s.strip() for s in self.RISK_ALLOWED_SYMBOLS.split(",") if s.strip()]
 
     @property
     def is_mock(self) -> bool:
