@@ -683,6 +683,22 @@ haven't messaged the bot first.
 - Check MT5 server name in `.env` matches exactly (case-sensitive)
 - Try File → Login to Trade Account again
 
+### MT5 IPC timeout (error [-10005])
+
+```
+MT5 initialisation returned False: [-10005] IPC timeout
+```
+
+[-10005] means MT5 sees the terminal process but couldn't get a response in time. The `MetaTrader5.initialize()` call communicates via Windows IPC pipes. Common causes:
+
+- **Restart MT5 Desktop** — the IPC pipe can get stale after a long session. Close MT5 fully (File → Exit, not just the X), reopen, and log back into your demo account.
+- **Set MT5_TERMINAL_PATH** — auto-detection sometimes fails. Right-click your MT5 shortcut → Properties → copy the "Target" path, then add it to `gateway/.env`:
+  ```ini
+  MT5_TERMINAL_PATH=C:\Program Files\MetaTrader 5\terminal64.exe
+  ```
+- **Run MT5 as Administrator once** — right-click MT5 Desktop → Run as Administrator, log in, close it, then launch the Gateway normally.
+- **Restart the Gateway** — after each of the above steps, restart the uvicorn process on Windows.
+
 ### "Invalid signature" from Gateway
 
 → HMAC secrets don't match between Hub and Gateway.
