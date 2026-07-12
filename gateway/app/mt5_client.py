@@ -85,6 +85,10 @@ class _MockMT5:
         return _MockOrderResult()
 
     @staticmethod
+    def symbol_select(symbol: str, enable: bool = True) -> bool:
+        return True
+
+    @staticmethod
     def last_error() -> tuple[int, str]:
         return (0, "No error")
 
@@ -257,6 +261,20 @@ class MT5Client:
         except Exception:
             return False
 
+    # ── Symbol visibility ──────────────────────────────────────────────
+
+    def _ensure_symbol_visible(self, symbol: str) -> None:
+        """Add symbol to Market Watch so it can be queried via the API.
+
+        No-op in mock mode.  Safe to call multiple times — MT5 ignores
+        the request if the symbol is already visible.
+        """
+        if not self._mock:
+            try:
+                self._mt5.symbol_select(symbol, True)
+            except Exception:
+                pass  # non-fatal — the subsequent info/tick call will fail
+
     # ── Info queries ─────────────────────────────────────────────────
 
     def get_account_info(self) -> dict[str, Any]:
@@ -283,6 +301,7 @@ class MT5Client:
 
     def get_symbol_tick(self, symbol: str) -> dict[str, Any]:
         """Return current bid/ask for a symbol."""
+        self._ensure_symbol_visible(symbol)
         try:
             tick = self._mt5.symbol_info_tick(symbol)
             return _asdict_safe(tick) if tick else {}
@@ -292,6 +311,7 @@ class MT5Client:
 
     def get_symbol_info(self, symbol: str) -> dict[str, Any] | None:
         """Return symbol metadata (None if not found/tradeable)."""
+        self._ensure_symbol_visible(symbol)
         try:
             info = self._mt5.symbol_info(symbol)
             return _asdict_safe(info) if info else None

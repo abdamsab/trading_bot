@@ -19,7 +19,7 @@ class TestGatewayConfig:
     def test_defaults(self) -> None:
         from gateway.app.config import GatewaySettings
 
-        s = GatewaySettings()  # type: ignore[call-arg]
+        s = GatewaySettings(_env_file=None)  # type: ignore[call-arg]
         assert s.GATEWAY_HOST == "0.0.0.0"
         assert s.GATEWAY_PORT == 9000
         assert s.MT5_MOCK is True
