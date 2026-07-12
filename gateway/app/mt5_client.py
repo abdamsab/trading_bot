@@ -218,6 +218,11 @@ class MT5Client:
         self._initialized = True
         self._started_at = time.time()
         logger.info("MT5 initialised successfully")
+
+        # Pre-load allowed symbols into Market Watch so the API can find them
+        if not self._mock:
+            self._enable_allowed_symbols()
+
         return True
 
     def shutdown(self) -> None:
@@ -263,17 +268,49 @@ class MT5Client:
 
     # ── Symbol visibility ──────────────────────────────────────────────
 
-    def _ensure_symbol_visible(self, symbol: str) -> None:
-        """Add symbol to Market Watch so it can be queried via the API.
-
-        No-op in mock mode.  Safe to call multiple times — MT5 ignores
-        the request if the symbol is already visible.
-        """
-        if not self._mock:
+    def _enable_allowed_symbols(self) -> None:
+        """Pre-load all configured symbols into Market Watch at startup."""
+        symbols = self._settings.allowed_symbols
+        logger.info("Enabling %d symbols in Market Watch …", len(symbols))
+        for symbol in symbols:
             try:
-                self._mt5.symbol_select(symbol, True)
-            except Exception:
-                pass  # non-fatal — the subsequent info/tick call will fail
+                ok = self._mt5.symbol_select(symbol, True)
+                if ok:
+                    logger.debug("symbol_select(%s) = True", symbol)
+                else:
+                    logger.warning("symbol_select(%s) failed (symbol may not exist)", symbol)
+            except Exception as exc:
+                logger.warning("symbol_select(%s) raised: %s", symbol, exc)
+        logger.info("Market Watch pre-load finished")
+
+    def _ensure_symbol_visible(self, symbol: str, retries: int = 2) -> None:
+        """Add *symbol* to Market Watch with retry.
+
+        MT5 sometimes needs a short moment after ``symbol_select()``
+        before the symbol data is queryable, so we retry with a brief
+        sleep between attempts.
+        """
+        if self._mock:
+            return
+        for attempt in range(1, retries + 1):
+            try:
+                ok = self._mt5.symbol_select(symbol, True)
+                if not ok:
+                    logger.debug(
+                        "symbol_select(%s) attempt %d returned False",
+                        symbol, attempt,
+                    )
+                time.sleep(0.3)  # give IPC a moment
+                # Verify the symbol actually appeared
+                if self._mt5.symbol_info(symbol) is not None:
+                    return  # visible now
+                if attempt < retries:
+                    time.sleep(0.7)  # longer wait before retry
+            except Exception as exc:
+                logger.debug("symbol_select(%s) attempt %d raised: %s", symbol, attempt, exc)
+                if attempt < retries:
+                    time.sleep(1.0)
+        logger.warning("Could not make symbol %s visible after %d attempts", symbol, retries)
 
     # ── Info queries ─────────────────────────────────────────────────
 
