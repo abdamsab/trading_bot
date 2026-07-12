@@ -37,7 +37,7 @@ Two separate services that communicate via HMAC-signed HTTP:
 - Telegram bot token (from [@BotFather](https://t.me/BotFather))
 - (Optional) Twelve Data API key for market data
 - (Optional) LLM API key (OpenAI / Anthropic / Gemini)
-- Windows machine with MT5 Desktop and Exness demo account (for live execution)
+- Windows machine with **Exness MT5 Desktop** (download from Exness, not generic MetaQuotes) and Exness demo account (for live execution)
 
 ### 1. Clone & Setup
 
@@ -85,12 +85,14 @@ The Hub starts the Telegram bot, market data service, and optional auto-proposal
 
 ### 5. Run the Gateway (for MT5 execution)
 
-On your Windows machine with MT5 Desktop:
+On your Windows machine with **Exness MT5 Desktop** running and logged into your demo account:
 
 ```bash
-cd gateway
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
+cd trading_bot
+uvicorn gateway.app.main:app --host 0.0.0.0 --port 9000
 ```
+
+> **Important**: Use the **Exness-branded MT5** installer (download from [exness.com](https://www.exness.com/downloads/)), not the generic one from MetaQuotes. The generic installer defaults to `MetaQuotes-Demo` and causes server/login issues. Exness installation path: `C:\Program Files\MetaTrader 5 EXNESS\terminal64.exe`. Set `MT5_TERMINAL_PATH` in `gateway/.env` to this path if `[-10005] IPC timeout` occurs.
 
 ### 6. Test It
 

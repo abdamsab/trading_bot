@@ -82,7 +82,7 @@ real (demo) trades.
 | # | What | Purpose | Cost | URL |
 |---|---|---|---|---|
 | 1 | **Exness Demo Account** | MT5 trading account for testing | Free | https://www.exness.com |
-| 2 | **MT5 Desktop (Windows)** | Terminal the Gateway connects to | Free | https://www.metatrader5.com |
+| 2 | **Exness MT5 Desktop (Windows)** | Terminal the Gateway connects to | Free | https://www.exness.com/downloads/ |
 | 3 | **Telegram Bot** | Send/receive trade proposals | Free | https://t.me/botfather |
 | 4 | **OpenAI API Key** (or Anthropic) | LLM generates trade proposals | ~$5 credit | https://platform.openai.com |
 | 5 | **ngrok** (optional) | Tunnel Telegram webhook to WSL2 | Free tier | https://ngrok.com |
@@ -129,30 +129,43 @@ You'll need:
 
 ---
 
-## 4. Setup: MT5 Desktop Terminal (Windows)
+## 4. Setup: Exness MT5 Desktop Terminal (Windows)
 
 > ⏱ 15 minutes
 
-1. **Download** MetaTrader 5 from https://www.metatrader5.com/en/download
+### Download & Install
+
+1. **Download Exness MT5** from https://www.exness.com/downloads/ (the **Exness-branded** installer, not the generic MetaQuotes one)
 2. **Install** by running the installer (default options are fine)
-3. **Launch MT5**
+3. **Launch MT5** — it will open the login dialog
 4. **Log in to your Exness demo account**:
 
-   a. File → Login to Trade Account
-   b. Enter:
+   a. Enter:
       - **Login**: your Exness demo account number
       - **Password**: the trader password from step 3
-      - **Server**: select your Exness server (or type it)
-   c. Click **Login**
+      - **Server**: select `Exness-MT5Trial9` from the broker list (click the **...** button, search "Exness")
+   b. Click **Login**
 
 5. **Verify connection**:
-   - You should see **Balance: $10,000 (or whatever)**, **Equity: $10,000**
-   - In the "Market Watch" panel (Ctrl+M), you should see forex symbols:
-     `EURUSD`, `GBPUSD`, `USDJPY`, `XAUUSD`, etc.
+   - Title bar shows your account and server
+   - Market Watch (Ctrl+M) shows forex symbols
    - Right-click in Market Watch → **Show All** if symbols are missing
 
-6. **Keep MT5 running** — the Gateway needs the terminal to be open with
-   an active connection. Minimise to system tray — don't close it.
+6. **Enable Algorithmic Trading & DLL imports** (required for the Gateway to connect):
+
+   Go to **Tools → Options → Expert Advisors** and set:
+
+   - [x] **Allow algorithmic trading**
+   - [x] **Allow DLL imports**
+   - [ ] **Disable automated trading through the external Python API** (must be **unchecked**)
+
+   Click OK.
+
+7. **Restart MT5 properly**: **File → Exit** (not just close window), then relaunch. Verify the settings survived the restart.
+
+> **Important**: The Exness-branded installer installs to `C:\Program Files\MetaTrader 5 EXNESS\terminal64.exe` — a different path than the generic MetaQuotes version. If the Gateway fails with `[-10005] IPC timeout`, set `MT5_TERMINAL_PATH` in `gateway/.env` to this path.
+
+8. **Keep MT5 running** — the Gateway needs the terminal to be open with an active connection. Minimise to system tray — don't close it.
 
 ---
 
@@ -466,7 +479,8 @@ GATEWAY_PORT=9000
 GATEWAY_HMAC_SECRET=dev-secret-change-in-production
 MT5_ACCOUNT=12345678
 MT5_PASSWORD=your_exness_password
-MT5_SERVER=Exness-MT5Trial8
+MT5_SERVER=Exness-MT5Trial9
+MT5_TERMINAL_PATH=C:\Program Files\MetaTrader 5 EXNESS\terminal64.exe
 MT5_MOCK=False
 RISK_MAX_SINGLE_LOT=10.0
 RISK_MAX_OPEN_POSITIONS=20
@@ -477,6 +491,7 @@ RISK_ALLOWED_SYMBOLS=EURUSD,GBPUSD,USDJPY,XAUUSD
 **Critical settings**:
 - `MT5_MOCK=False` — tells the Gateway to use the real MT5 DLL
 - `MT5_ACCOUNT`, `MT5_PASSWORD`, `MT5_SERVER` — from your Exness demo
+- `MT5_TERMINAL_PATH` — **required** for Exness-branded install (non-standard path)
 - `GATEWAY_HMAC_SECRET` — must match the value in the Hub's `.env`!
 
 ### Step B.7 — Start MT5 on Windows and log in
@@ -691,13 +706,34 @@ MT5 initialisation returned False: [-10005] IPC timeout
 
 [-10005] means MT5 sees the terminal process but couldn't get a response in time. The `MetaTrader5.initialize()` call communicates via Windows IPC pipes. Common causes:
 
-- **Restart MT5 Desktop** — the IPC pipe can get stale after a long session. Close MT5 fully (File → Exit, not just the X), reopen, and log back into your demo account.
-- **Set MT5_TERMINAL_PATH** — auto-detection sometimes fails. Right-click your MT5 shortcut → Properties → copy the "Target" path, then add it to `gateway/.env`:
+- **Set MT5_TERMINAL_PATH** — this is the #1 fix. The Exness-branded installer puts the terminal at a non-standard path. Add to `gateway/.env`:
   ```ini
-  MT5_TERMINAL_PATH=C:\Program Files\MetaTrader 5\terminal64.exe
+  MT5_TERMINAL_PATH=C:\Program Files\MetaTrader 5 EXNESS\terminal64.exe
   ```
+- **Enable DLL imports + Algorithmic Trading** — MT5 blocks the IPC pipe unless both are enabled:
+  - Tools → Options → Expert Advisors
+  - [x] Allow algorithmic trading
+  - [x] Allow DLL imports
+  - [ ] Disable automated trading through the external Python API (unchecked)
+- **Restart MT5 Desktop** — the IPC pipe can get stale after a long session. Close MT5 fully (**File → Exit**, not just the X), reopen, and log back in.
 - **Run MT5 as Administrator once** — right-click MT5 Desktop → Run as Administrator, log in, close it, then launch the Gateway normally.
-- **Restart the Gateway** — after each of the above steps, restart the uvicorn process on Windows.
+- **Clear stale cache** — close MT5, delete everything in the hash-named folder under `%AppData%\MetaQuotes\Terminal\`, then restart and re-login.
+
+### Gateway returns "Symbol not found on MT5"
+
+```
+Symbol EURUSD not found on MT5
+```
+
+The MT5 Python API can only query symbols that are **visible in Market Watch**. On a fresh Exness demo, symbols like EURUSD may not be enabled by default.
+
+**Fix on MT5 Desktop:**
+- Right-click in **Market Watch** → **Show All**
+- Or right-click → **Symbols** → select EURUSD, GBPUSD, etc. → **Show**
+
+**Or right-click a visible symbol → Hide All, then Show All** to refresh.
+
+Once symbols appear in Market Watch, restart the Gateway. The code also has a programmatic fix (calls `symbol_select()` automatically), so after a fresh reinstall this should resolve.
 
 ### "Invalid signature" from Gateway
 
@@ -806,7 +842,8 @@ GATEWAY_PORT=9000
 GATEWAY_HMAC_SECRET=dev-secret-change-in-production
 MT5_ACCOUNT=12345678
 MT5_PASSWORD=your_exness_demo_password
-MT5_SERVER=Exness-MT5Trial8
+MT5_SERVER=Exness-MT5Trial9
+MT5_TERMINAL_PATH=C:\Program Files\MetaTrader 5 EXNESS\terminal64.exe
 MT5_MOCK=False
 RISK_MAX_SINGLE_LOT=10.0
 RISK_MAX_OPEN_POSITIONS=20
