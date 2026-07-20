@@ -220,7 +220,7 @@ def _generate_mock_proposal() -> dict:
     """Generate a fake proposal for testing the approval flow."""
     import random
 
-    symbols = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]
+    symbols = settings.allowed_symbols_list or ["EURUSDm", "GBPUSDm", "USDJPYm", "XAUUSDm"]
     actions = ["BUY", "SELL"]
     reasons = [
         "Price broke 200 EMA on H1 with volume. RSI at 62 suggests more room before overbought.",
