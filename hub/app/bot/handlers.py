@@ -230,16 +230,54 @@ def _generate_mock_proposal() -> dict:
         "Consolidation breakout above resistance. Volume confirmed. Targeting next resistance.",
     ]
 
+    sym = random.choice(symbols)
+    action = random.choice(actions)
+
+    # Compute SL/TP relative to a reasonable base price for the symbol
+    base = _base_price_for_symbol(sym)
+    sl_distance = base * 0.003  # 0.3% stop
+    tp_distance = base * 0.006  # 0.6% target
+    if action == "BUY":
+        sl = round(base - sl_distance, 5)
+        tp = round(base + tp_distance, 5)
+    else:
+        sl = round(base + sl_distance, 5)
+        tp = round(base - tp_distance, 5)
+
     return {
-        "action": random.choice(actions),
-        "symbol": random.choice(symbols),
+        "action": action,
+        "symbol": sym,
         "volume": round(random.uniform(0.05, 0.50), 2),
         "confidence": round(random.uniform(0.55, 0.92), 2),
         "reason": random.choice(reasons),
-        "take_profit": round(random.uniform(1.1050, 1.1200), 4),
-        "stop_loss": round(random.uniform(1.0900, 1.0980), 4),
+        "take_profit": tp,
+        "stop_loss": sl,
         "timeframe": random.choice(["scalp", "intraday", "swing"]),
     }
+
+
+def _base_price_for_symbol(symbol: str) -> float:
+    """Return a plausible current price level for mock SL/TP generation."""
+    s = symbol.upper().replace("M", "")
+    # Major forex pairs ~1.00-1.40
+    if s in ("EURUSD", "GBPUSD", "AUDUSD", "NZDUSD"):
+        return 1.10
+    # USDJPY ~150-165
+    if s in ("USDJPY", "EURJPY", "GBPJPY"):
+        return 155.0
+    # Metals
+    if s in ("XAUUSD", "XAGUSD"):
+        return 4000.0 if s == "XAUUSD" else 30.0
+    # Exotics / others
+    if s in ("USDCAD", "USDCHF"):
+        return 1.35
+    if s in ("EURGBP",):
+        return 0.85
+    if s in ("BTCUSD",):
+        return 60000.0
+    if s in ("ETHUSD",):
+        return 3000.0
+    return 1.10  # fallback
 
 
 # ── Command Handlers ───────────────────────────────────────────────────
