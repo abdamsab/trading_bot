@@ -264,13 +264,17 @@ class MT5Client:
                     self._initialized = True
                     self._started_at = time.time()
                     conn = self._mt5.terminal_info()
+                    acct = self._mt5.account_info()
                     logger.info(
                         "MT5 initialised successfully via '%s' — "
-                        "terminal=%s connected=%s trade_allowed=%s",
+                        "terminal=%s connected=%s trade_allowed=%s "
+                        "account=%s server=%s",
                         label,
                         getattr(conn, "name", "?") if conn else "?",
                         getattr(conn, "connected", "?") if conn else "?",
                         getattr(conn, "trade_allowed", "?") if conn else "?",
+                        getattr(acct, "login", "?") if acct else "?",
+                        getattr(acct, "server", "?") if acct else "?",
                     )
                     # Pre-load allowed symbols into Market Watch
                     if not self._mock:
