@@ -448,10 +448,57 @@ class MT5Client:
         any object with matching attrs (mock).
         """
         try:
-            result = self._mt5.order_send(request)
-            return _asdict_safe(result)
+            # Log the full request before sending
+            req_dict = _asdict_safe(request)
+            logger.info(
+                "send_order: %s %s %.2f @ %.5f (SL=%.5f TP=%.5f deviation=%d magic=%d)",
+                "BUY" if getattr(request, "type", -1) == 0 else "SELL",
+                getattr(request, "symbol", "?"),
+                getattr(request, "volume", 0),
+                getattr(request, "price", 0),
+                getattr(request, "sl", 0),
+                getattr(request, "tp", 0),
+                getattr(request, "deviation", 10),
+                getattr(request, "magic", 0),
+            )
+
+            # ── Convert to native MT5 TradeRequest when using real MT5 ──
+            if not self._mock and _HAS_MT5:
+                native = _real_mt5.TradeRequest()
+                for attr in (
+                    "action", "symbol", "volume", "type", "price",
+                    "sl", "tp", "deviation", "magic", "comment",
+                    "type_time", "type_filling",
+                ):
+                    setattr(native, attr, getattr(request, attr, 0))
+                logger.debug("Converted to native mt5.TradeRequest: action=%s symbol=%s",
+                             getattr(native, "action"), getattr(native, "symbol"))
+                result = self._mt5.order_send(native)
+            else:
+                result = self._mt5.order_send(request)
+
+            # ── Parse result ───────────────────────────────────────
+            ret = _asdict_safe(result)
+            retcode = ret.get("retcode", -1)
+            if retcode not in (10009, 10008):
+                err = self._get_last_error()
+                logger.warning(
+                    "order_send returned retcode=%s — last_error=%s",
+                    retcode, err,
+                )
+            else:
+                logger.info(
+                    "order_send OK — retcode=%s deal=%s order=%s volume=%s price=%s",
+                    retcode,
+                    ret.get("deal"), ret.get("order"),
+                    ret.get("volume"), ret.get("price"),
+                )
+            return ret
+
         except Exception as exc:
             logger.error("Order send failed", exc_info=exc)
+            err = self._get_last_error()
+            logger.error("MT5 last_error after failed order_send: %s", err)
             return {"retcode": -1, "comment": str(exc)}
 
     # ── Health ───────────────────────────────────────────────────────
