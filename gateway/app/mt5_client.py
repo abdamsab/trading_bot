@@ -165,6 +165,26 @@ def _asdict_safe(obj: Any) -> dict[str, Any]:
     return {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
 
 
+def _summarise_kwargs(kwargs: dict[str, Any]) -> str:
+    """Return a log-safe summary of MT5 initialisation kwargs.
+
+    Hides the password value while keeping the keys visible.
+    """
+    parts = []
+    for k, v in kwargs.items():
+        if k == "password":
+            parts.append(f"{k}=***")
+        elif k == "login":
+            parts.append(f"{k}={v}")
+        elif k == "path":
+            # Show just the basename to keep logs compact
+            short = v.rsplit("\\", 1)[-1].rsplit("/", 1)[-1] if v else "None"
+            parts.append(f"{k}=…{short}")
+        else:
+            parts.append(f"{k}={v}")
+    return ", ".join(parts) if parts else "(none)"
+
+
 # ── MT5 Client ──────────────────────────────────────────────────────
 
 
@@ -208,31 +228,66 @@ class MT5Client:
         password = self._settings.MT5_PASSWORD or None
         server = self._settings.MT5_SERVER or None
 
-        try:
-            result = self._mt5.initialize(
-                path=path,
-                login=login,
-                password=password,
-                server=server,
+        # ── Strategy: connect to already-running terminal first ───────
+        #
+        # When MT5 Desktop is already open on the host (common on
+        # Windows), passing login/password/server at init time can
+        # trigger [-6] Terminal: Authorization failed because there is
+        # already an authenticated session.  We try three approaches in
+        # order of least-intrusiveness:
+        #
+        #   1. path only  — connect to running terminal at the known path
+        #   2. full creds — launch / authenticate from scratch
+        #   3. bare       — last resort, let the library auto-detect
+        #
+        attempts = []
+
+        # Attempt A: path only (no login/password/server)
+        if path:
+            attempts.append(("path only", {"path": path}))
+        # Attempt B: full credentials
+        if login and password and server:
+            attempts.append(
+                ("full credentials",
+                 {"path": path, "login": login, "password": password, "server": server})
             )
-        except Exception as exc:
-            logger.error("MT5 initialisation failed", exc_info=exc)
-            return False
+        # Attempt C: bare initialize()
+        attempts.append(("bare", {}))
 
-        if not result:
-            err = self._get_last_error()
-            logger.error("MT5 initialisation returned False: %s", err)
-            return False
+        last_error: str | None = None
+        for label, kwargs in attempts:
+            try:
+                logger.info("MT5 init attempt — %s: %s", label, _summarise_kwargs(kwargs))
+                result = self._mt5.initialize(**kwargs)
+                if result:
+                    self._initialized = True
+                    self._started_at = time.time()
+                    conn = self._mt5.terminal_info()
+                    logger.info(
+                        "MT5 initialised successfully via '%s' — "
+                        "terminal=%s connected=%s trade_allowed=%s",
+                        label,
+                        getattr(conn, "name", "?") if conn else "?",
+                        getattr(conn, "connected", "?") if conn else "?",
+                        getattr(conn, "trade_allowed", "?") if conn else "?",
+                    )
+                    # Pre-load allowed symbols into Market Watch
+                    if not self._mock:
+                        self._enable_allowed_symbols()
+                    return True
+                last_error = self._get_last_error()
+                logger.warning(
+                    "MT5 init attempt '%s' returned False: %s", label, last_error,
+                )
+            except Exception as exc:
+                last_error = f"exception: {exc}"
+                logger.warning("MT5 init attempt '%s' raised: %s", label, exc)
 
-        self._initialized = True
-        self._started_at = time.time()
-        logger.info("MT5 initialised successfully")
-
-        # Pre-load allowed symbols into Market Watch so the API can find them
-        if not self._mock:
-            self._enable_allowed_symbols()
-
-        return True
+        logger.error(
+            "All %d MT5 initialisation attempts failed.  Last error: %s",
+            len(attempts), last_error,
+        )
+        return False
 
     def shutdown(self) -> None:
         """Disconnect from MT5."""
