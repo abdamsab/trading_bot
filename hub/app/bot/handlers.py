@@ -598,8 +598,12 @@ async def proposal_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         try:
             import httpx
 
+            from shared.utils.crypto import sign_payload
+
+            sig, ts = sign_payload({}, settings.gateway_hmac_secret)
             gw_resp = await httpx.AsyncClient(timeout=10).get(
-                f"{settings.gateway_base_url}/account"
+                f"{settings.gateway_base_url}/account",
+                headers={"X-Signature": sig, "X-Timestamp": str(ts)},
             )
             if gw_resp.status_code == 200:
                 acct = gw_resp.json()

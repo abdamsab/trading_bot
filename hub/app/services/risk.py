@@ -101,8 +101,14 @@ async def fetch_account_info() -> dict[str, Any] | None:
     try:
         import httpx
 
+        from shared.utils.crypto import sign_payload
+
+        sig, ts = sign_payload({}, settings.gateway_hmac_secret)
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{settings.gateway_base_url}/account")
+            resp = await client.get(
+                f"{settings.gateway_base_url}/account",
+                headers={"X-Signature": sig, "X-Timestamp": str(ts)},
+            )
             if resp.status_code == 200:
                 return resp.json()
     except Exception:
