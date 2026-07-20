@@ -280,14 +280,18 @@ class MT5Client:
     def _enable_allowed_symbols(self) -> None:
         """Pre-load all configured symbols into Market Watch at startup."""
         symbols = self._settings.allowed_symbols
-        logger.info("Enabling %d symbols in Market Watch …", len(symbols))
+        logger.info("Enabling %d symbols in Market Watch: %s", len(symbols), symbols)
         for symbol in symbols:
             try:
                 ok = self._mt5.symbol_select(symbol, True)
                 if ok:
                     logger.debug("symbol_select(%s) = True", symbol)
                 else:
-                    logger.warning("symbol_select(%s) failed (symbol may not exist)", symbol)
+                    err = self._get_last_error()
+                    logger.warning(
+                        "symbol_select(%s) failed — last_error=%s",
+                        symbol, err,
+                    )
             except Exception as exc:
                 logger.warning("symbol_select(%s) raised: %s", symbol, exc)
         logger.info("Market Watch pre-load finished")
@@ -305,9 +309,10 @@ class MT5Client:
             try:
                 ok = self._mt5.symbol_select(symbol, True)
                 if not ok:
+                    err = self._get_last_error()
                     logger.debug(
-                        "symbol_select(%s) attempt %d returned False",
-                        symbol, attempt,
+                        "symbol_select(%s) attempt %d returned False — last_error=%s",
+                        symbol, attempt, err,
                     )
                 time.sleep(0.3)  # give IPC a moment
                 # Verify the symbol actually appeared
@@ -319,7 +324,11 @@ class MT5Client:
                 logger.debug("symbol_select(%s) attempt %d raised: %s", symbol, attempt, exc)
                 if attempt < retries:
                     time.sleep(1.0)
-        logger.warning("Could not make symbol %s visible after %d attempts", symbol, retries)
+        logger.warning(
+            "Could not make symbol %s visible after %d attempts — "
+            "symbol_select+symbol_info both failed",
+            symbol, retries,
+        )
 
     # ── Info queries ─────────────────────────────────────────────────
 
@@ -350,7 +359,12 @@ class MT5Client:
         self._ensure_symbol_visible(symbol)
         try:
             tick = self._mt5.symbol_info_tick(symbol)
-            return _asdict_safe(tick) if tick else {}
+            result = _asdict_safe(tick) if tick else {}
+            if not result:
+                logger.warning("symbol_info_tick(%s) returned no data", symbol)
+            else:
+                logger.debug("symbol_info_tick(%s) OK — bid=%s ask=%s", symbol, result.get("bid"), result.get("ask"))
+            return result
         except Exception as exc:
             logger.warning("Failed to fetch tick for %s", symbol, exc_info=exc)
             return {}
@@ -360,7 +374,12 @@ class MT5Client:
         self._ensure_symbol_visible(symbol)
         try:
             info = self._mt5.symbol_info(symbol)
-            return _asdict_safe(info) if info else None
+            result = _asdict_safe(info) if info else None
+            if result is None:
+                logger.warning("symbol_info(%s) returned None — symbol not tradeable", symbol)
+            else:
+                logger.debug("symbol_info(%s) OK — trade_mode=%s", symbol, result.get("trade_mode"))
+            return result
         except Exception as exc:
             logger.warning("Failed to fetch symbol info for %s", symbol, exc_info=exc)
             return None

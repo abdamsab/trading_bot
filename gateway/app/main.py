@@ -275,11 +275,20 @@ async def execute_trade(
     # 3. Verify symbol is tradeable on MT5
     symbol_info = mt5.get_symbol_info(order.symbol)
     if symbol_info is None:
+        logger.warning(
+            "Symbol check failed for trade: action=%s symbol=%s volume=%s proposal=%s",
+            order.action.value, order.symbol, order.volume, order.proposal_id,
+        )
         return ExecutionResult(
             success=False,
             status="rejected",
             error_message=f"Symbol {order.symbol} not found on MT5",
         ).model_dump()
+
+    logger.info(
+        "Symbol verified: %s trade_mode=%s",
+        order.symbol, symbol_info.get("trade_mode"),
+    )
 
     # 4. Run risk validation
     account_info = mt5.get_account_info()
