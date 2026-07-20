@@ -35,10 +35,13 @@ class RiskEnforcer:
         """
         violations: list[str] = []
 
-        # 1. Allowed symbols
+        # 1. Allowed symbols (case-insensitive match, Exness uses lowercase 'm')
         allowed = self._settings.allowed_symbols
-        if order.symbol.upper() not in allowed:
-            violations.append(f"Symbol {order.symbol} not in allowed list: {', '.join(allowed)}")
+        allowed_upper = {s.upper() for s in allowed}
+        if order.symbol.upper() not in allowed_upper:
+            violations.append(
+                f"Symbol {order.symbol} not in allowed list: {', '.join(allowed)}"
+            )
 
         # 2. Max single lot
         max_lot = Decimal(str(self._settings.RISK_MAX_SINGLE_LOT))
