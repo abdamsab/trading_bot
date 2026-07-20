@@ -179,6 +179,8 @@ async def get_account(
         "margin_free": float(info.get("margin_free", 0)),
         "margin_level": float(info.get("margin_level", 0)),
         "leverage": info.get("leverage"),
+        "trade_allowed": info.get("trade_allowed"),
+        "trade_mode": info.get("trade_mode"),  # 0=demo, 1=contest, 2=real
         "floating_pnl": total_profit,
         "open_positions": len(positions),
     }
@@ -272,7 +274,15 @@ async def execute_trade(
         order.proposal_id,
     )
 
-    # 3. Verify symbol is tradeable on MT5
+    # 3. Check if the account itself allows trading
+    account_info = mt5.get_account_info()
+    if account_info.get("trade_allowed") is False:
+        return ExecutionResult(
+            success=False, status="rejected",
+            error_message=f"Account {account_info.get('login', '?')} on {account_info.get('server', '?')} does not allow new trades",
+        ).model_dump()
+
+    # 5. Verify symbol is tradeable on MT5
     symbol_info = mt5.get_symbol_info(order.symbol)
     if symbol_info is None:
         logger.warning(
@@ -290,10 +300,14 @@ async def execute_trade(
         order.symbol, symbol_info.get("trade_mode"),
     )
 
-    # 3b. Check that the symbol accepts new positions
+    # 5b. Check that the symbol accepts new positions
     #     trade_mode values from MT5: 0=FULL, 1=DISABLED, 2=LONGONLY,
     #     3=SHORTONLY, 4=CLOSEONLY, 5=NO
     trade_mode = symbol_info.get("trade_mode", -1)
+    #
+    # If ALL symbols return CLOSEONLY (trade_mode=4), the issue is likely
+    # account-level (expired demo / broker restriction) rather than the
+    # individual symbol's market hours.
     if trade_mode == 1:
         return ExecutionResult(
             success=False, status="rejected",
@@ -320,8 +334,7 @@ async def execute_trade(
             error_message=f"{order.symbol} is short-only — BUY not allowed",
         ).model_dump()
 
-    # 4. Run risk validation
-    account_info = mt5.get_account_info()
+    # 6. Run risk validation
     violations = risk.validate(order, account_info=account_info)
     if violations:
         msg = "; ".join(violations)

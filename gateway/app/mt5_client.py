@@ -116,6 +116,7 @@ class _MockAccountInfo:
             "server": "MockServer-Demo",
             "currency": "USD",
             "trade_mode": 0,
+            "trade_allowed": True,
             "leverage": 100,
         }
 
@@ -530,6 +531,8 @@ class MT5Client:
                 "margin": account.get("margin"),
                 "margin_free": account.get("margin_free"),
                 "currency": account.get("currency", "USD"),
+                "trade_allowed": account.get("trade_allowed"),
+                "trade_mode": account.get("trade_mode"),  # 0=demo, 1=contest, 2=real
             },
             "positions_count": len(positions),
             "sample_tick": {
