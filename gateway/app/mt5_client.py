@@ -464,24 +464,24 @@ class MT5Client:
 
             # ── Convert to native MT5 TradeRequest when using real MT5 ──
             if not self._mock and _HAS_MT5:
-                # The real MetaTrader5 module uses a named-tuple structseq;
-                # you can't call TradeRequest() empty and setattr — must
-                # pass all keyword arguments to the constructor directly.
-                native = _real_mt5.TradeRequest(
-                    action=getattr(request, "action", 1),
-                    symbol=getattr(request, "symbol", ""),
-                    volume=getattr(request, "volume", 0.01),
-                    type=getattr(request, "type", 0),
-                    price=getattr(request, "price", 0.0),
-                    sl=getattr(request, "sl", 0.0),
-                    tp=getattr(request, "tp", 0.0),
-                    deviation=getattr(request, "deviation", 10),
-                    magic=getattr(request, "magic", 0),
-                    comment=getattr(request, "comment", ""),
-                    type_time=getattr(request, "type_time", 0),
-                    type_filling=getattr(request, "type_filling", 0),
-                )
-                logger.debug("Built native mt5.TradeRequest: action=%s symbol=%s", native.action, native.symbol)
+                # mt5.order_send() accepts a dict directly — no structseq constructor needed.
+                # The TradeRequest structseq is a C type that does NOT accept keyword args.
+                native = {
+                    "action": getattr(request, "action", 1),
+                    "symbol": getattr(request, "symbol", ""),
+                    "volume": getattr(request, "volume", 0.01),
+                    "type": getattr(request, "type", 0),
+                    "price": getattr(request, "price", 0.0),
+                    "sl": getattr(request, "sl", 0.0),
+                    "tp": getattr(request, "tp", 0.0),
+                    "deviation": getattr(request, "deviation", 10),
+                    "magic": getattr(request, "magic", 0),
+                    "comment": getattr(request, "comment", ""),
+                    "type_time": getattr(request, "type_time", 0),
+                    "type_filling": getattr(request, "type_filling", 0),
+                }
+                logger.debug("Built dict for mt5.order_send: action=%s symbol=%s",
+                             native["action"], native["symbol"])
                 result = self._mt5.order_send(native)
             else:
                 result = self._mt5.order_send(request)
