@@ -476,7 +476,7 @@ class MT5Client:
                     "tp": getattr(request, "tp", 0.0),
                     "deviation": getattr(request, "deviation", 10),
                     "magic": getattr(request, "magic", 0),
-                    "comment": getattr(request, "comment", ""),
+                    "comment": getattr(request, "comment", "")[:31] or "TradeBot",
                     "type_time": getattr(request, "type_time", 0),
                     "type_filling": getattr(request, "type_filling", 0),
                 }

@@ -100,7 +100,7 @@ class OrderExecutor:
             tp=float(order.take_profit) if order.take_profit else 0.0,
             deviation=10,
             magic=202406,
-            comment=f"TradeBot {order.proposal_id}"
+            comment=f"Tbot {str(order.proposal_id)[:22]}"
             if hasattr(order, "proposal_id")
             else "TradeBot",
         )
