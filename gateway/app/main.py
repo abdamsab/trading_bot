@@ -290,6 +290,36 @@ async def execute_trade(
         order.symbol, symbol_info.get("trade_mode"),
     )
 
+    # 3b. Check that the symbol accepts new positions
+    #     trade_mode values from MT5: 0=FULL, 1=DISABLED, 2=LONGONLY,
+    #     3=SHORTONLY, 4=CLOSEONLY, 5=NO
+    trade_mode = symbol_info.get("trade_mode", -1)
+    if trade_mode == 1:
+        return ExecutionResult(
+            success=False, status="rejected",
+            error_message=f"Trading disabled for {order.symbol}",
+        ).model_dump()
+    if trade_mode == 4:
+        return ExecutionResult(
+            success=False, status="rejected",
+            error_message=f"Market closed for {order.symbol} — no new positions accepted",
+        ).model_dump()
+    if trade_mode == 5:
+        return ExecutionResult(
+            success=False, status="rejected",
+            error_message=f"Trading not allowed for {order.symbol}",
+        ).model_dump()
+    if trade_mode == 2 and order.action.value.upper() == "SELL":
+        return ExecutionResult(
+            success=False, status="rejected",
+            error_message=f"{order.symbol} is long-only — SELL not allowed",
+        ).model_dump()
+    if trade_mode == 3 and order.action.value.upper() == "BUY":
+        return ExecutionResult(
+            success=False, status="rejected",
+            error_message=f"{order.symbol} is short-only — BUY not allowed",
+        ).model_dump()
+
     # 4. Run risk validation
     account_info = mt5.get_account_info()
     violations = risk.validate(order, account_info=account_info)

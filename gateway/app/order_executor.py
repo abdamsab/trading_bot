@@ -28,6 +28,35 @@ ORDER_TIME_SPECIFIED = 2  # Specified expiry
 
 SYMBOL_TRADE_EXECUTION_REQUEST = 0  # not used by us — for reference
 
+# ── MT5 retcode → human-readable message ───────────────────────────
+
+MT5_RETCODE_MESSAGES: dict[int, str] = {
+    10004: "Invalid volume",
+    10005: "Market is closed",              # trade disabled by server
+    10006: "Insufficient funds",
+    10007: "Order rejected",
+    10008: "Order partially filled",
+    10009: "Order executed successfully",
+    10010: "Order expired",
+    10011: "Order cancelled",
+    10012: "Order placed as pending",
+    10013: "Too many pending orders",
+    10014: "Invalid SL/TP values",
+    10015: "Position is locked",
+    10016: "Invalid stops: SL/TP too close to market",
+    10017: "Invalid stops: SL/TP on wrong side",
+    10018: "Market is closed for this symbol",
+    10019: "Too many requests (rate limited)",
+    10020: "Order timeout",
+    10021: "Server is busy",
+    10022: "Invalid price",
+    10023: "Invalid order type",
+    10024: "Invalid expiration",
+    10025: "Order is locked",
+    10026: "Too many orders from this account",
+}
+
+
 # ── TradeRequest builder (object-based for mock compat) ────────────
 
 
@@ -131,10 +160,13 @@ class OrderExecutor:
                 error_message=None,
             )
         else:
+            friendly = MT5_RETCODE_MESSAGES.get(
+                retcode, f"Broker rejected (retcode={retcode})"
+            )
             return ExecutionResult(
                 success=False,
                 ticket_id=None,
                 fill_price=None,
                 status="rejected",
-                error_message=result.get("comment", f"retcode={retcode}"),
+                error_message=friendly,
             )
