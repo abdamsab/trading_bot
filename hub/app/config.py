@@ -160,6 +160,8 @@ class Settings(BaseSettings):
         ``market_data_provider`` can be a comma-separated list of providers
         tried in priority order (e.g. "twelve_data,gateway").
         """
+        from hub.app.services.market_data import MarketDataService
+
         raw = self.market_data_provider or "twelve_data"
         providers = [p.strip() for p in raw.split(",") if p.strip()]
         return MarketDataService(
