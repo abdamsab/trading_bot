@@ -107,6 +107,22 @@ class Settings(BaseSettings):
     # Symbols to auto-scan (comma-sep). Empty = use risk_allowed_symbols
     auto_proposal_symbols: str = ""
 
+    # ── Market Digest (independent news digest) ──────────────────────
+    # Sends periodic market news + outlook to Telegram, separate from
+    # trade proposals. Uses NewsCollector + optional LLM summary.
+    digest_enabled: bool = False
+    # Minutes between digest sends
+    digest_interval_minutes: int = 120
+    # Include current prices alongside headlines
+    digest_include_prices: bool = True
+    # Use LLM to generate a short market outlook paragraph (costs ~1-2K tokens per digest)
+    digest_use_llm: bool = True
+
+    @property
+    def digest_symbols_list(self) -> list[str]:
+        """Symbols to show prices for in the digest. Falls back to allowed_symbols."""
+        return self.allowed_symbols_list
+
     @property
     def allowed_symbols_list(self) -> list[str]:
         return [s.strip() for s in self.risk_allowed_symbols.split(",") if s.strip()]

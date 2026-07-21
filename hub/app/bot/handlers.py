@@ -56,6 +56,7 @@ _llm_agent = None
 _market_data_service = None
 _news_collector = None
 _rate_limiter = None
+_digest_service = None  # MarketDigestService (injected from main.py)
 
 
 def set_db_session_factory(factory):
@@ -86,6 +87,12 @@ def set_rate_limiter(limiter):
     """Inject the RateLimitEnforcer from main.py."""
     global _rate_limiter
     _rate_limiter = limiter
+
+
+def set_digest_service(service):
+    """Inject the MarketDigestService from main.py."""
+    global _digest_service
+    _digest_service = service
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
@@ -295,6 +302,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "*Commands:*\n"
         "`/proposal` — Generate an AI trade proposal\n"
         "`/mock_proposal` — Generate a test proposal\n"
+        "`/digest` — Market news digest\n"
         "`/status` — System health\n"
         "`/pause` / `/resume` — Stop/start proposals\n"
         "`/proposals` — Recent proposal history\n"
@@ -313,6 +321,7 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "`/start` — Welcome & overview\n"
         "`/proposal` — Generate an AI trade proposal\n"
         "`/mock_proposal` — Generate a test proposal\n"
+        "`/digest` — Market news digest\n"
         "`/status` — System health\n"
         "`/pause` — Pause proposal generation\n"
         "`/resume` — Resume proposal generation\n"
@@ -778,6 +787,28 @@ async def proposal_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
 
 
+# ── Market Digest Command ─────────────────────────────────────────────
+
+
+async def digest_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /digest — send an on-demand market digest."""
+    if not _is_authorized(update):
+        return
+    if _digest_service is None:
+        await update.message.reply_text(
+            "📰 Market digest is not configured.\n"
+            "Set `DIGEST_ENABLED=True` in `.env` and restart."
+        )
+        return
+
+    await update.message.reply_text("📰 *Fetching market digest…*")
+    try:
+        await _digest_service.tick()
+    except Exception as exc:
+        logger.error("digest_command_failed", error=str(exc))
+        await update.message.reply_text(f"⚠️ Digest failed: `{exc}`")
+
+
 # ── Callback Handlers ──────────────────────────────────────────────────
 
 
@@ -1222,6 +1253,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("mock_proposal", mock_proposal_handler))
     application.add_handler(CommandHandler("proposal", proposal_handler))
     application.add_handler(CommandHandler("cancel", cancel_fsm_handler))
+    application.add_handler(CommandHandler("digest", digest_handler))
 
     # Callbacks
     application.add_handler(CallbackQueryHandler(approve_callback, pattern=r"^approve:"))

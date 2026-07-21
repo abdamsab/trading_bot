@@ -22,6 +22,7 @@ from hub.app.bot.handlers import (
     set_market_data_service,
     set_news_collector,
     set_rate_limiter,
+    set_digest_service,
 )
 from hub.app.config import settings
 from hub.app.models import async_session_factory, close_db, init_db
@@ -30,6 +31,7 @@ from hub.app.services.market_data import MarketDataService
 from hub.app.services.news_collector import NewsCollector
 from hub.app.services.rate_limiter import RateLimitEnforcer
 from hub.app.services.scheduled_proposal import ScheduledProposalService
+from hub.app.services.market_digest import MarketDigestService
 
 # ── Logging setup ───────────────────────────────────────────────────────
 # Writes to both console (stdout) and log.log in the project root.
@@ -87,6 +89,7 @@ _llm_model_name: str = ""
 # ── Auto Proposal Service ─────────────────────────────────────────────
 
 _scheduled_proposal_service: ScheduledProposalService | None = None
+_digest_service: MarketDigestService | None = None
 
 
 async def _start_auto_proposal() -> None:
@@ -138,6 +141,51 @@ async def _stop_auto_proposal() -> None:
         _scheduled_proposal_service = None
         logger.info("auto_proposal_stopped")
 
+# ── Market Digest Service ─────────────────────────────────────────────
+
+
+async def _start_digest() -> None:
+    """Start the market digest service if enabled."""
+    global _digest_service
+    if not settings.digest_enabled:
+        logger.info("digest_disabled")
+        return
+
+    if telegram_app is None:
+        logger.warning("digest_skipped", reason="telegram_not_available")
+        return
+
+    try:
+        _digest_service = MarketDigestService(
+            llm_provider=llm_agent.provider if llm_agent else None,
+            market_data_service=market_data_service,
+            news_collector=news_collector,
+            telegram_app=telegram_app,
+            user_telegram_id=settings.user_telegram_id,
+            interval_minutes=settings.digest_interval_minutes,
+            include_prices=settings.digest_include_prices,
+            use_llm=settings.digest_use_llm,
+            symbols=settings.digest_symbols_list,
+        )
+        set_digest_service(_digest_service)
+        _digest_service.start()
+        logger.info(
+            "digest_started",
+            interval_minutes=settings.digest_interval_minutes,
+            use_llm=settings.digest_use_llm,
+        )
+    except Exception:
+        logger.exception("digest_init_failed")
+        _digest_service = None
+
+
+async def _stop_digest() -> None:
+    """Stop the market digest service."""
+    global _digest_service
+    if _digest_service:
+        await _digest_service.stop()
+        _digest_service = None
+        logger.info("digest_stopped")
 
 # ── FastAPI Lifecycle ──────────────────────────────────────────────────
 
@@ -234,6 +282,9 @@ async def startup():
     # 8. Start auto-proposal service
     await _start_auto_proposal()
 
+    # 9. Start market digest service
+    await _start_digest()
+
 
 @app.on_event("shutdown")
 async def shutdown():
@@ -241,6 +292,9 @@ async def shutdown():
 
     # Stop auto-proposal service
     await _stop_auto_proposal()
+
+    # Stop market digest service
+    await _stop_digest()
 
     # Stop Telegram bot
     if telegram_app:
@@ -272,6 +326,7 @@ async def health():
             else "not_configured",
             "news_collector": "enabled" if news_collector else "disabled",
             "auto_proposal": "enabled" if settings.auto_proposal_enabled else "disabled",
+            "market_digest": "enabled" if settings.digest_enabled else "disabled",
             "mt5_gateway": "not_checked",
         },
     }
