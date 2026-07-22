@@ -152,8 +152,35 @@ class ScheduledProposalService:
             return
 
         # 4. Build market context (only volatile symbols)
+        # Enrich with technical context for better LLM decisions
+        enriched_prices = {}
+        for sym in volatile_symbols:
+            snap = prices[sym]
+            enriched = dict(snap)
+            # Add computed technical context
+            price = snap.get("price") or snap.get("bid")
+            high = snap.get("high_day")
+            low = snap.get("low_day")
+            if price and high and low and high != low:
+                # Position in daily range (0 = at low, 1 = at high)
+                range_pos = (price - low) / (high - low)
+                enriched["daily_range_position"] = round(range_pos, 2)
+                enriched["daily_range"] = round(high - low, 5)
+            if price and snap.get("spread"):
+                enriched["spread_ratio"] = round(snap["spread"] / price, 6)
+            # Trend indicator
+            change = snap.get("change_pct")
+            if change is not None:
+                if change > 0.1:
+                    enriched["trend_hint"] = "bullish"
+                elif change < -0.1:
+                    enriched["trend_hint"] = "bearish"
+                else:
+                    enriched["trend_hint"] = "neutral/ranging"
+            enriched_prices[sym] = enriched
+
         market_ctx: dict[str, Any] = {
-            "prices": {sym: prices[sym] for sym in volatile_symbols},
+            "prices": enriched_prices,
             "source": self._market_data.provider_name,
         }
 

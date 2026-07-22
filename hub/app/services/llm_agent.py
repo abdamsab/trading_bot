@@ -69,16 +69,42 @@ Analyze market data, news, and technical context. Output one trade recommendatio
   "timeframe": "scalp" | "intraday" | "swing" | "position"
 }
 
+## Decision Framework (MANDATORY — follow this exactly)
+
+Step 1: Identify the current trend direction.
+- Use "today_change_pct" and "spread_ratio" from market data
+- Positive change = bullish momentum, negative = bearish momentum
+
+Step 2: Consider BOTH sides before deciding.
+- Bullish case: What would justify a BUY? (uptrend, support bounce, oversold)
+- Bearish case: What would justify a SELL? (downtrend, resistance rejection, overbought)
+- If neither side has a clear edge → HOLD
+
+Step 3: Assign confidence honestly.
+- **Confidence ≥ 0.60**: Strong setup, clear direction. Output BUY or SELL.
+- **Confidence 0.40–0.59**: Mixed signals or low conviction. Output HOLD.
+- **Confidence < 0.40**: No clear setup. Output HOLD with confidence < 0.30.
+
+Step 4: Risk assessment.
+- Is the spread reasonable? (spread/price < 0.001 for forex)
+- Is the symbol in a tradeable session? (check timestamp — avoid thin-liquidity hours)
+
 ## Rules
 - BE SPECIFIC. Reference actual price levels, technical indicators, and their values.
-- BE HONEST. If uncertainty is high, set action to "HOLD" with low confidence (0.1–0.4).
+- BE BALANCED. Consider both bullish AND bearish scenarios for every symbol.
 - BE CONCISE. Reasons should be 2-4 sentences, not paragraphs.
 - volume must be between 0.01 and 10.0.
 - confidence must be between 0.0 and 1.0.
-- take_profit and stop_loss are OPTIONAL. Set to null if not applicable. If you set them, follow the SL/TP rules below.
+- take_profit and stop_loss are OPTIONAL. Set to null if not applicable.
 - Consider spread costs: don't recommend trades where TP < 3× spread.
 - HOLD means no trade recommended. HOLD proposals are logged but not sent to Telegram.
 - CRITICAL: The symbol field MUST use the EXACT symbol from Market Context (e.g. "EURUSDm", "XAUUSDm"). Do NOT strip the trailing "m" — it is part of the broker's symbol name.
+
+## Confidence Guidelines
+- BUY only when you see clear bullish evidence (uptrend, momentum, support)
+- SELL only when you see clear bearish evidence (downtrend, momentum, resistance)
+- HOLD when: mixed signals, ranging market, thin liquidity, or no clear edge
+- Default to HOLD if unsure — missed trades are better than bad trades
 
 ## SL/TP Rules (CRITICAL — get these right for every symbol)
 The take_profit and stop_loss values you generate MUST be RELATIVE to the
@@ -207,6 +233,26 @@ class LLMAgent:
 
         # Parse JSON from the response text
         proposal = self._parse_response(response.text)
+
+        # HOLD threshold: force HOLD if confidence < 0.55 for BUY/SELL
+        # This catches LLM bias where it picks a direction with low conviction
+        if proposal.action in ("BUY", "SELL") and proposal.confidence < 0.55:
+            logger.info(
+                "llm_hold_threshold",
+                original_action=proposal.action,
+                confidence=proposal.confidence,
+                symbol=proposal.symbol,
+            )
+            proposal = LLMProposal(
+                action="HOLD",
+                symbol=proposal.symbol,
+                volume=0.0,
+                confidence=proposal.confidence,
+                reason=f"Low conviction ({proposal.confidence:.0%}) for {proposal.action} — {proposal.reason[:200]}",
+                take_profit=None,
+                stop_loss=None,
+                timeframe=proposal.timeframe,
+            )
 
         logger.info(
             "llm_proposal_generated",
