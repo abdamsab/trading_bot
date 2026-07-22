@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -91,51 +90,6 @@ MT5_RETCODE_MESSAGES: dict[int, str] = {
 }
 
 
-# ── Market Hours ───────────────────────────────────────────────────
-
-# Gold/Silver have daily maintenance breaks
-_METAL_MAINTENANCE_START = (20, 58)  # 20:58 GMT
-_METAL_MAINTENANCE_END = (22, 1)     # 22:01 GMT
-
-# Weekend closure: Friday 22:00 GMT → Sunday 22:00 GMT
-_WEEKEND_OPEN_HOUR = (0, 0)   # Sunday 00:00 still closed
-_WEEKEND_CLOSE_HOUR = (22, 0) # Opens Sunday 22:00 GMT
-
-
-def _is_market_open(symbol: str, now_utc: datetime | None = None) -> tuple[bool, str]:
-    """Check if the market is open for the given symbol.
-
-    Returns:
-        (is_open, reason) — reason explains why market is closed.
-    """
-    if now_utc is None:
-        now_utc = datetime.now(timezone.utc)
-
-    weekday = now_utc.weekday()  # 0=Mon, 6=Sun
-    hour = now_utc.hour
-    minute = now_utc.minute
-
-    # Weekend check (all symbols)
-    # Friday after 22:00 → Sunday before 22:00 = closed
-    if weekday == 4 and (hour > 22 or (hour == 22 and minute > 0)):
-        return False, "Weekend closure — market closed Friday 22:00 GMT"
-    if weekday == 5:  # Saturday
-        return False, "Weekend closure — Saturday"
-    if weekday == 6 and hour < 22:
-        return False, "Weekend closure — market opens Sunday 22:00 GMT"
-
-    # Daily maintenance for metals (XAUUSDm, XAGUSDm)
-    sym_upper = symbol.upper()
-    if sym_upper.startswith(("XAU", "XAG")):
-        now_minutes = hour * 60 + minute
-        maint_start = _METAL_MAINTENANCE_START[0] * 60 + _METAL_MAINTENANCE_START[1]
-        maint_end = _METAL_MAINTENANCE_END[0] * 60 + _METAL_MAINTENANCE_END[1]
-        if maint_start <= now_minutes <= maint_end:
-            return False, f"Metal daily maintenance — {symbol} closed 20:58-22:01 GMT"
-
-    return True, ""
-
-
 # ── TradeRequest builder (object-based for mock compat) ────────────
 
 
@@ -184,18 +138,6 @@ class OrderExecutor:
         symbol = normalize_symbol(order.symbol)
         volume = float(order.volume)
         is_buy = order.action.upper() == "BUY"
-
-        # 0. Market hours check
-        is_open, reason = _is_market_open(symbol)
-        if not is_open:
-            logger.info("Market closed for %s — %s", symbol, reason)
-            return ExecutionResult(
-                success=False,
-                ticket_id=None,
-                fill_price=None,
-                status="rejected",
-                error_message=f"Market closed for {symbol} — {reason}",
-            )
 
         # 1. Get current price
         tick = self._mt5.get_symbol_tick(symbol)
