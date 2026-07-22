@@ -36,7 +36,12 @@ def validate_order(order: ApprovalRequest, account_info: dict[str, Any] | None =
 
     # 1. Allowed symbols
     allowed = settings.allowed_symbols_list
-    if order.symbol.upper() not in [s.upper() for s in allowed]:
+    symbol_upper = order.symbol.upper()
+    # Normalize: strip trailing 'm' (Exness suffix) for comparison
+    symbol_normalized = symbol_upper.rstrip("M") if symbol_upper.endswith("M") else symbol_upper
+    allowed_upper = [s.upper() for s in allowed]
+    allowed_normalized = [s.upper().rstrip("M") if s.upper().endswith("M") else s.upper() for s in allowed]
+    if symbol_upper not in allowed_upper and symbol_normalized not in allowed_normalized:
         violations.append(f"Symbol {order.symbol} not in allowed list: {', '.join(allowed)}")
 
     # 2. Max single lot

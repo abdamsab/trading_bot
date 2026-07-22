@@ -10,6 +10,39 @@ from shared.schemas import ApprovalRequest, ExecutionResult
 
 logger = logging.getLogger(__name__)
 
+
+def normalize_symbol(symbol: str) -> str:
+    """Normalize a symbol name for MT5.
+
+    Handles the mismatch between standard forex names (EURUSD, XAUUSD)
+    and Exness m-suffixed names (EURUSDm, XAUUSDm).
+
+    If the symbol already has an 'm' suffix or is unknown, returns it as-is.
+    If the symbol without 'm' matches a known allowed symbol with 'm',
+    returns the m-suffixed version.
+    """
+    # Already has m suffix — pass through
+    if symbol.upper().endswith("M"):
+        return symbol
+
+    # Common standard → Exness mapping (add more as needed)
+    known_m_symbols = {
+        "EURUSD": "EURUSDm",
+        "GBPUSD": "GBPUSDm",
+        "USDJPY": "USDJPYm",
+        "XAUUSD": "XAUUSDm",
+        "XAGUSD": "XAGUSDm",
+    }
+
+    upper = symbol.upper()
+    if upper in known_m_symbols:
+        mapped = known_m_symbols[upper]
+        logger.debug("symbol_normalized", original=symbol, normalized=mapped)
+        return mapped
+
+    # Unknown symbol — return as-is and let MT5 handle it
+    return symbol
+
 # ── TRADE REQUEST constants (mirrors mt5 enums) ────────────────────
 
 TRADE_ACTION_DEAL = 1  # instant order
@@ -102,7 +135,7 @@ class OrderExecutor:
         3. Submit via MT5 client.
         4. Parse result and return ExecutionResult.
         """
-        symbol = order.symbol
+        symbol = normalize_symbol(order.symbol)
         volume = float(order.volume)
         is_buy = order.action.upper() == "BUY"
 

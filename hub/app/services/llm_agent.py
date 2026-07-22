@@ -60,7 +60,7 @@ Analyze market data, news, and technical context. Output one trade recommendatio
 ## Output Format (JSON only)
 {
   "action": "BUY" | "SELL" | "HOLD",
-  "symbol": "EURUSD",
+  "symbol": "EURUSDm",
   "volume": 0.10,
   "confidence": 0.73,
   "reason": "2-4 sentences explaining your reasoning with specific price levels and indicators",
@@ -78,6 +78,7 @@ Analyze market data, news, and technical context. Output one trade recommendatio
 - take_profit and stop_loss are OPTIONAL. Set to null if not applicable. If you set them, follow the SL/TP rules below.
 - Consider spread costs: don't recommend trades where TP < 3× spread.
 - HOLD means no trade recommended. HOLD proposals are logged but not sent to Telegram.
+- CRITICAL: The symbol field MUST use the EXACT symbol from Market Context (e.g. "EURUSDm", "XAUUSDm"). Do NOT strip the trailing "m" — it is part of the broker's symbol name.
 
 ## SL/TP Rules (CRITICAL — get these right for every symbol)
 The take_profit and stop_loss values you generate MUST be RELATIVE to the

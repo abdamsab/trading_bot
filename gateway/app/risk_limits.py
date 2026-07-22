@@ -37,8 +37,11 @@ class RiskEnforcer:
 
         # 1. Allowed symbols (case-insensitive match, Exness uses lowercase 'm')
         allowed = self._settings.allowed_symbols
-        allowed_upper = {s.upper() for s in allowed}
-        if order.symbol.upper() not in allowed_upper:
+        symbol_upper = order.symbol.upper()
+        # Normalize: strip trailing 'm' (Exness suffix) for comparison
+        symbol_normalized = symbol_upper.rstrip("M") if symbol_upper.endswith("M") else symbol_upper
+        allowed_upper = {s.upper().rstrip("M") if s.upper().endswith("M") else s.upper() for s in allowed}
+        if symbol_upper not in {s.upper() for s in allowed} and symbol_normalized not in allowed_upper:
             violations.append(
                 f"Symbol {order.symbol} not in allowed list: {', '.join(allowed)}"
             )
