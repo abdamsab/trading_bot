@@ -152,6 +152,16 @@ class MarketDataService:
 
     # ── Provider: Twelve Data ──────────────────────────────────────────
 
+    @staticmethod
+    def _provider_symbol(symbol: str) -> str:
+        """Strip Exness 'm' suffix for external API providers.
+
+        Exness uses EURUSDm, but Twelve Data / Alpha Vantage expect EURUSD.
+        """
+        if symbol.upper().endswith("M") and len(symbol) > 2:
+            return symbol[:-1]
+        return symbol
+
     async def _fetch_twelve_data(self, symbol: str) -> dict[str, Any]:
         """Fetch from Twelve Data REST API.
 
@@ -160,13 +170,14 @@ class MarketDataService:
         if not self._api_key:
             return self._empty_snapshot(symbol, error="Twelve Data API key not configured")
 
-        # Twelve Data uses slash in symbol: EUR/USD, XAU/USD
-        td_symbol = symbol
-        if symbol in self.FOREX_SYMBOLS | self.COMMON_METALS:
-            if len(symbol) == 6 and symbol[:3] not in ("XAU", "XAG"):
-                td_symbol = f"{symbol[:3]}/{symbol[3:]}"
-            elif symbol in self.COMMON_METALS:
-                td_symbol = f"{symbol[:3]}/{symbol[3:]}"
+        # Strip Exness 'm' suffix and convert to Twelve Data format
+        base = self._provider_symbol(symbol)
+        td_symbol = base
+        if base in self.FOREX_SYMBOLS | self.COMMON_METALS:
+            if len(base) == 6 and base[:3] not in ("XAU", "XAG"):
+                td_symbol = f"{base[:3]}/{base[3:]}"
+            elif base in self.COMMON_METALS:
+                td_symbol = f"{base[:3]}/{base[3:]}"
 
         url = "https://api.twelvedata.com/quote"
         params = {"symbol": td_symbol, "apikey": self._api_key}
